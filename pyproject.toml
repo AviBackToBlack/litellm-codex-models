@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "litellm-codex-models"
+version = "0.1.0"
+description = "Generate a Codex model catalog from LiteLLM /v1/model/info"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "AviBackToBlack" }]
+dependencies = []
+
+[project.scripts]
+litellm-codex-models = "litellm_codex_models.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
