@@ -89,5 +89,59 @@ def fetch_catalog(config: CodexConfig, ref: str) -> dict[str, Any]:
     return _validate_catalog(payload, url)
 
 
+def fetch_model_prompt(config: CodexConfig, ref: str) -> str:
+    owner_repo = config.repository.strip("/")
+    path = "codex-rs/models-manager/prompt.md"
+    url = f"https://raw.githubusercontent.com/{owner_repo}/{quote(ref, safe='')}/{path}"
+    request = Request(url, headers={"Accept": "text/plain", "User-Agent": "litellm-codex-models/0.2"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except HTTPError as exc:
+        if exc.code == 404:
+            raise AppError(
+                f"No Codex fallback prompt found at ref {ref!r}. "
+                "Use --codex-prompt-file when generating foreign models from a local/compatible catalog."
+            ) from exc
+        raise AppError(f"Codex prompt request failed: HTTP {exc.code} {exc.reason}") from exc
+    except URLError as exc:
+        raise AppError(f"Codex prompt request failed: {exc.reason}") from exc
+
+
+def fetch_model_schema_source(config: CodexConfig, ref: str) -> str:
+    owner_repo = config.repository.strip("/")
+    path = "codex-rs/protocol/src/openai_models.rs"
+    url = f"https://raw.githubusercontent.com/{owner_repo}/{quote(ref, safe='')}/{path}"
+    request = Request(url, headers={"Accept": "text/plain", "User-Agent": "litellm-codex-models/0.2"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except HTTPError as exc:
+        if exc.code == 404:
+            raise AppError(
+                f"No Codex ModelInfo schema source found at ref {ref!r}. "
+                "Use --codex-schema-file when generating foreign models from a local/compatible catalog."
+            ) from exc
+        raise AppError(f"Codex schema request failed: HTTP {exc.code} {exc.reason}") from exc
+    except URLError as exc:
+        raise AppError(f"Codex schema request failed: {exc.reason}") from exc
+
+
+def load_prompt_file(path: str | Path) -> str:
+    path = Path(path)
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise AppError(f"Codex prompt file not found: {path}") from exc
+
+
+def load_schema_file(path: str | Path) -> str:
+    path = Path(path)
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise AppError(f"Codex schema file not found: {path}") from exc
+
+
 def catalog_index(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {model["slug"]: model for model in catalog["models"]}

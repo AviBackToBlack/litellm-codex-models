@@ -8,11 +8,21 @@ import sys
 import tempfile
 from typing import Any
 
-from .codex import fetch_catalog, load_catalog_file, resolve_ref
+from .codex import (
+    catalog_index,
+    fetch_catalog,
+    fetch_model_prompt,
+    fetch_model_schema_source,
+    load_catalog_file,
+    load_prompt_file,
+    load_schema_file,
+    resolve_ref,
+)
 from .config import AppConfig, load_config
 from .errors import AppError
 from .litellm import fetch_payload, load_payload_file, select_models
-from .mapping import GeneratedModel, canonical_candidates, generate_catalog
+from .mapping import GeneratedModel, canonical_candidates, generate_catalog, resolve_template
+from .schema import parse_model_info_schema
 
 
 def _load_litellm(config: AppConfig, input_path: str | None) -> list[dict[str, Any]]:
@@ -29,6 +39,39 @@ def _load_codex_catalog(
     ref, detected_version = resolve_ref(config.codex, codex_ref)
     label = ref if detected_version is None else f"{ref} (Codex {detected_version})"
     return fetch_catalog(config.codex, ref), label
+
+
+def _load_foreign_prompt(
+    config: AppConfig,
+    catalog_file: str | None,
+    prompt_file: str | None,
+    codex_ref: str | None,
+) -> str:
+    if prompt_file:
+        return load_prompt_file(prompt_file)
+    if catalog_file:
+        raise AppError(
+            "Foreign models with --catalog-file also require --codex-prompt-file so no model-specific donor prompt is guessed"
+        )
+    ref, _detected_version = resolve_ref(config.codex, codex_ref)
+    return fetch_model_prompt(config.codex, ref)
+
+
+def _load_foreign_schema(
+    config: AppConfig,
+    catalog_file: str | None,
+    schema_file: str | None,
+    codex_ref: str | None,
+) -> str:
+    if schema_file:
+        return load_schema_file(schema_file)
+    if catalog_file:
+        raise AppError(
+            "Foreign models with --catalog-file also require --codex-schema-file so required ModelInfo fields "
+            "are validated against the same Codex version"
+        )
+    ref, _detected_version = resolve_ref(config.codex, codex_ref)
+    return fetch_model_schema_source(config.codex, ref)
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any], pretty: bool) -> None:
@@ -93,7 +136,30 @@ def _build(args: argparse.Namespace, config: AppConfig) -> tuple[dict[str, Any],
     rows = _load_litellm(config, args.input)
     selected = select_models(rows, config.models, strict=config.strict)
     catalog, source = _load_codex_catalog(config, args.catalog_file, args.codex_ref)
-    generated, explanations = generate_catalog(selected, catalog)
+    index = catalog_index(catalog)
+    has_foreign = any(resolve_template(row, index)[0] is None for row in selected)
+    fallback_prompt = None
+    model_info_schema = None
+    if has_foreign:
+        fallback_prompt = _load_foreign_prompt(
+            config,
+            args.catalog_file,
+            args.codex_prompt_file,
+            args.codex_ref,
+        )
+        schema_source = _load_foreign_schema(
+            config,
+            args.catalog_file,
+            args.codex_schema_file,
+            args.codex_ref,
+        )
+        model_info_schema = parse_model_info_schema(schema_source)
+    generated, explanations = generate_catalog(
+        selected,
+        catalog,
+        fallback_prompt=fallback_prompt,
+        model_info_schema=model_info_schema,
+    )
     return generated, explanations, source
 
 
@@ -109,9 +175,15 @@ def cmd_build(args: argparse.Namespace, config: AppConfig) -> int:
     return 0
 
 
-def _format_value(value: Any) -> str:
+def _format_value(value: Any, *, full: bool = False) -> str:
     if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if not full and len(rendered.encode("utf-8")) > 240:
+            kind = "object" if isinstance(value, dict) else "array"
+            return f"<{kind}, {len(rendered.encode('utf-8'))} bytes>"
+        return rendered
+    if isinstance(value, str) and not full and len(value.encode("utf-8")) > 240:
+        return f"<string, {len(value.encode('utf-8'))} bytes>"
     return repr(value)
 
 
@@ -134,7 +206,7 @@ def cmd_explain(args: argparse.Namespace, config: AppConfig) -> int:
             print(f"  - {note}")
     print("fields:")
     for key in sorted(model.entry):
-        print(f"  {key}: {_format_value(model.entry[key])}")
+        print(f"  {key}: {_format_value(model.entry[key], full=args.full)}")
         print(f"    source: {model.provenance.get(key, 'unknown')}")
     return 0
 
@@ -148,6 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--input", help="Read a saved LiteLLM /v1/model/info JSON instead of calling LiteLLM")
         if needs_catalog:
             p.add_argument("--catalog-file", help="Use a local Codex models.json instead of fetching one")
+            p.add_argument("--codex-prompt-file", help="Use a local version-matched Codex models-manager/prompt.md for foreign models")
+            p.add_argument("--codex-schema-file", help="Use a local version-matched Codex protocol/src/openai_models.rs for foreign models")
             p.add_argument("--codex-ref", help="Override Codex git ref/tag, e.g. rust-v0.153.0 or main")
 
     p_list = sub.add_parser("list", help="List LiteLLM models")
@@ -160,6 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_explain = sub.add_parser("explain", help="Explain generated field provenance")
     common(p_explain, needs_catalog=True)
+    p_explain.add_argument("--full", action="store_true", help="Print full large strings/objects such as model messages")
     p_explain.add_argument("model")
 
     return parser
