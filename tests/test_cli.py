@@ -1,3 +1,5 @@
+import pytest
+
 from litellm_codex_models.cli import _format_value, build_parser
 
 
@@ -17,3 +19,10 @@ def test_explain_parser_accepts_full():
     args = build_parser().parse_args(["explain", "--full", "some-model"])
     assert args.full is True
     assert args.model == "some-model"
+
+
+def test_cli_version_does_not_require_config(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        build_parser().parse_args(["--version"])
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out == "litellm-codex-models 0.2.0\n"
