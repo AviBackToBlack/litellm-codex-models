@@ -4,13 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "litellm-codex-models"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generate a Codex model catalog from LiteLLM /v1/model/info"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "AviBackToBlack" }]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/AviBackToBlack/litellm-codex-models"
+Repository = "https://github.com/AviBackToBlack/litellm-codex-models"
+Issues = "https://github.com/AviBackToBlack/litellm-codex-models/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10"]
