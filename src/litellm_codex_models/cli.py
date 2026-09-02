@@ -8,11 +8,21 @@ import sys
 import tempfile
 from typing import Any
 
-from .codex import catalog_index, fetch_catalog, fetch_model_prompt, load_catalog_file, load_prompt_file, resolve_ref
+from .codex import (
+    catalog_index,
+    fetch_catalog,
+    fetch_model_prompt,
+    fetch_model_schema_source,
+    load_catalog_file,
+    load_prompt_file,
+    load_schema_file,
+    resolve_ref,
+)
 from .config import AppConfig, load_config
 from .errors import AppError
 from .litellm import fetch_payload, load_payload_file, select_models
 from .mapping import GeneratedModel, canonical_candidates, generate_catalog, resolve_template
+from .schema import parse_model_info_schema
 
 
 def _load_litellm(config: AppConfig, input_path: str | None) -> list[dict[str, Any]]:
@@ -45,6 +55,23 @@ def _load_foreign_prompt(
         )
     ref, _detected_version = resolve_ref(config.codex, codex_ref)
     return fetch_model_prompt(config.codex, ref)
+
+
+def _load_foreign_schema(
+    config: AppConfig,
+    catalog_file: str | None,
+    schema_file: str | None,
+    codex_ref: str | None,
+) -> str:
+    if schema_file:
+        return load_schema_file(schema_file)
+    if catalog_file:
+        raise AppError(
+            "Foreign models with --catalog-file also require --codex-schema-file so required ModelInfo fields "
+            "are validated against the same Codex version"
+        )
+    ref, _detected_version = resolve_ref(config.codex, codex_ref)
+    return fetch_model_schema_source(config.codex, ref)
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any], pretty: bool) -> None:
@@ -112,6 +139,7 @@ def _build(args: argparse.Namespace, config: AppConfig) -> tuple[dict[str, Any],
     index = catalog_index(catalog)
     has_foreign = any(resolve_template(row, index)[0] is None for row in selected)
     fallback_prompt = None
+    model_info_schema = None
     if has_foreign:
         fallback_prompt = _load_foreign_prompt(
             config,
@@ -119,7 +147,19 @@ def _build(args: argparse.Namespace, config: AppConfig) -> tuple[dict[str, Any],
             args.codex_prompt_file,
             args.codex_ref,
         )
-    generated, explanations = generate_catalog(selected, catalog, fallback_prompt=fallback_prompt)
+        schema_source = _load_foreign_schema(
+            config,
+            args.catalog_file,
+            args.codex_schema_file,
+            args.codex_ref,
+        )
+        model_info_schema = parse_model_info_schema(schema_source)
+    generated, explanations = generate_catalog(
+        selected,
+        catalog,
+        fallback_prompt=fallback_prompt,
+        model_info_schema=model_info_schema,
+    )
     return generated, explanations, source
 
 
@@ -181,6 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
         if needs_catalog:
             p.add_argument("--catalog-file", help="Use a local Codex models.json instead of fetching one")
             p.add_argument("--codex-prompt-file", help="Use a local version-matched Codex models-manager/prompt.md for foreign models")
+            p.add_argument("--codex-schema-file", help="Use a local version-matched Codex protocol/src/openai_models.rs for foreign models")
             p.add_argument("--codex-ref", help="Override Codex git ref/tag, e.g. rust-v0.153.0 or main")
 
     p_list = sub.add_parser("list", help="List LiteLLM models")

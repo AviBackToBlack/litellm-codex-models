@@ -1,13 +1,21 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from litellm_codex_models.errors import AppError
 from litellm_codex_models.mapping import generate_model
+from litellm_codex_models.schema import ModelInfoSchema
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "codex-models.json"
 CATALOG = json.loads(FIXTURE.read_text())
 INDEX = {m["slug"]: m for m in CATALOG["models"]}
 FALLBACK_PROMPT = "You are a generic Codex coding agent."
+SCHEMA = ModelInfoSchema(
+    fields=frozenset(),
+    required_fields=frozenset(),
+)
 
 
 def row(name, model, **info):
@@ -53,14 +61,25 @@ def test_alias_resolves_from_base_model_and_rewrites_slug():
 
 def test_explicit_false_downgrades_exact_capability_but_null_does_not():
     disabled = generate_model(
-        row("gpt-5.6-sol", "azure/gpt-5.6-sol", supports_vision=False, supported_openai_params=["reasoning_effort"]),
+        row(
+            "gpt-5.6-sol",
+            "azure/gpt-5.6-sol",
+            supports_vision=False,
+            supported_openai_params=["reasoning_effort"],
+        ),
         INDEX,
     )
     assert disabled.entry["input_modalities"] == ["text"]
     assert disabled.entry["support_verbosity"] is False
     assert disabled.entry["supports_parallel_tool_calls"] is False
+
     unknown = generate_model(
-        row("gpt-5.6-sol", "azure/gpt-5.6-sol", supports_vision=None, supported_openai_params=None),
+        row(
+            "gpt-5.6-sol",
+            "azure/gpt-5.6-sol",
+            supports_vision=None,
+            supported_openai_params=None,
+        ),
         INDEX,
     )
     assert unknown.entry["input_modalities"] == ["text", "image"]
@@ -87,6 +106,8 @@ def test_foreign_model_uses_litellm_context_and_conservative_harness():
         },
         INDEX,
         fallback_prompt=FALLBACK_PROMPT,
+        model_info_schema=SCHEMA,
+        codex_catalog=CATALOG,
     )
     assert generated.kind == "foreign"
     assert generated.entry["context_window"] == 1_000_000
@@ -118,6 +139,8 @@ def test_foreign_reasoning_does_not_invent_null_efforts():
         },
         INDEX,
         fallback_prompt=FALLBACK_PROMPT,
+        model_info_schema=SCHEMA,
+        codex_catalog=CATALOG,
     )
     assert generated.entry["supported_reasoning_levels"] == []
     assert generated.entry["default_reasoning_level"] is None
@@ -137,5 +160,59 @@ def test_foreign_parallel_tools_require_explicit_function_calling_true():
         },
         INDEX,
         fallback_prompt=FALLBACK_PROMPT,
+        model_info_schema=SCHEMA,
+        codex_catalog=CATALOG,
     )
     assert generated.entry["supports_parallel_tool_calls"] is False
+
+
+def test_foreign_schema_guard_copies_only_catalog_invariant_required_fields():
+    second = {**CATALOG["models"][0], "slug": "second-template"}
+    catalog = {
+        "models": [
+            {**CATALOG["models"][0], "new_required": "same"},
+            {**second, "new_required": "same"},
+        ]
+    }
+    generated = generate_model(
+        {
+            "model_name": "foreign-new-schema",
+            "litellm_params": {"model": "vendor/foreign-new-schema"},
+            "model_info": {"mode": "chat"},
+        },
+        {m["slug"]: m for m in catalog["models"]},
+        fallback_prompt=FALLBACK_PROMPT,
+        model_info_schema=ModelInfoSchema(
+            fields=frozenset({"new_required"}),
+            required_fields=frozenset({"new_required"}),
+        ),
+        codex_catalog=catalog,
+    )
+    assert generated.entry["new_required"] == "same"
+    assert generated.provenance["new_required"] == "codex:catalog-invariant-required-field"
+
+
+def test_foreign_schema_guard_fails_closed_for_model_specific_required_field():
+    second = {**CATALOG["models"][0], "slug": "second-template"}
+    catalog = {
+        "models": [
+            {**CATALOG["models"][0], "new_required": "a"},
+            {**second, "new_required": "b"},
+        ]
+    }
+
+    with pytest.raises(AppError, match="cannot safely synthesize"):
+        generate_model(
+            {
+                "model_name": "foreign-new-schema",
+                "litellm_params": {"model": "vendor/foreign-new-schema"},
+                "model_info": {"mode": "chat"},
+            },
+            {m["slug"]: m for m in catalog["models"]},
+            fallback_prompt=FALLBACK_PROMPT,
+            model_info_schema=ModelInfoSchema(
+                fields=frozenset({"new_required"}),
+                required_fields=frozenset({"new_required"}),
+            ),
+            codex_catalog=catalog,
+        )

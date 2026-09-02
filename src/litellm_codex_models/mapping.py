@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .errors import AppError
+from .schema import ModelInfoSchema
 
 
 REASONING_DESCRIPTIONS = {
@@ -57,10 +58,13 @@ def _normalize_candidate(value: Any) -> str | None:
         prefix, tail = value.split("/", 1)
         if prefix in PROVIDER_PREFIXES and tail:
             value = tail
+    # Bedrock-style prefixes commonly precede the vendor/model identifier.
     for region in ("us.", "eu.", "apac.", "global."):
         if value.startswith(region):
             value = value[len(region):]
             break
+    # azure/openai aliases are the common exact-Codex case. Keep other vendor
+    # names intact rather than guessing a lossy rewrite.
     if value.startswith("openai."):
         value = value[len("openai."):]
     return value or None
@@ -111,10 +115,15 @@ def _reasoning_presets_foreign(row: dict[str, Any]) -> list[dict[str, str]]:
     info = row.get("model_info") or {}
     if info.get("supports_reasoning") is not True:
         return []
+
     params = _params(row)
     if "reasoning_effort" not in params:
         return []
+
+    # Foreign models advertise only what LiteLLM explicitly confirms. `null`
+    # remains unknown and never becomes an inferred effort level.
     efforts = [effort for effort, flag in EFFORT_FLAG_MAP.items() if info.get(flag) is True]
+
     return [
         {"effort": effort, "description": REASONING_DESCRIPTIONS[effort]}
         for effort in efforts
@@ -142,11 +151,13 @@ def _restrict_exact_reasoning(entry: dict[str, Any], row: dict[str, Any], proven
 def _overlay_exact(entry: dict[str, Any], row: dict[str, Any], provenance: dict[str, str], notes: list[str]) -> None:
     info = row.get("model_info") or {}
     params = _params(row)
+
     if info.get("supports_vision") is False and "image" in entry.get("input_modalities", []):
         entry["input_modalities"] = [x for x in entry["input_modalities"] if x != "image"]
         provenance["input_modalities"] = "codex:exact-template downgraded by LiteLLM supports_vision=false"
     elif info.get("supports_vision") is True:
         notes.append("LiteLLM confirms vision support")
+
     if "support_verbosity" in entry and info.get("supported_openai_params") is not None:
         if "verbosity" not in params and entry.get("support_verbosity") is True:
             entry["support_verbosity"] = False
@@ -155,16 +166,20 @@ def _overlay_exact(entry: dict[str, Any], row: dict[str, Any], provenance: dict[
             provenance["default_verbosity"] = "derived: verbosity disabled"
         elif "verbosity" in params:
             notes.append("LiteLLM confirms verbosity transport parameter")
+
     if "supports_parallel_tool_calls" in entry and info.get("supported_openai_params") is not None:
         if "parallel_tool_calls" not in params:
             entry["supports_parallel_tool_calls"] = False
             provenance["supports_parallel_tool_calls"] = "LiteLLM supported_openai_params (parallel_tool_calls absent)"
         else:
             notes.append("LiteLLM confirms parallel_tool_calls transport parameter")
+
     if info.get("supports_web_search") is False and entry.get("supports_search_tool") is True:
         entry["supports_search_tool"] = False
         provenance["supports_search_tool"] = "codex:exact-template downgraded by LiteLLM supports_web_search=false"
+
     _restrict_exact_reasoning(entry, row, provenance)
+
     max_input = info.get("max_input_tokens")
     if isinstance(max_input, int):
         notes.append(
@@ -172,7 +187,17 @@ def _overlay_exact(entry: dict[str, Any], row: dict[str, Any], provenance: dict[
         )
 
 
-def _build_foreign(row: dict[str, Any], canonical: str, fallback_prompt: str) -> GeneratedModel:
+def _build_foreign(
+    row: dict[str, Any],
+    canonical: str,
+    fallback_prompt: str,
+    model_info_schema: ModelInfoSchema,
+    codex_catalog: dict[str, Any],
+) -> GeneratedModel:
+    # Deliberately construct the foreign entry from Codex fallback semantics.
+    # Never deep-copy a model-specific catalog entry: donor-only fields such as
+    # plans, service tiers, compaction metadata, tool modes and model messages
+    # are not safe to inherit across model families.
     entry: dict[str, Any] = {
         "slug": str(row["model_name"]),
         "display_name": str(row["model_name"]),
@@ -188,7 +213,10 @@ def _build_foreign(row: dict[str, Any], canonical: str, fallback_prompt: str) ->
         "default_service_tier": None,
         "availability_nux": None,
         "upgrade": None,
-        "model_messages": {"instructions_template": fallback_prompt, "instructions_variables": None},
+        "model_messages": {
+            "instructions_template": fallback_prompt,
+            "instructions_variables": None,
+        },
         "include_skills_usage_instructions": False,
         "include_plugin_usage_instructions": False,
         "include_apps_usage_instructions": False,
@@ -219,14 +247,18 @@ def _build_foreign(row: dict[str, Any], canonical: str, fallback_prompt: str) ->
     }
     provenance = {key: "codex:conservative-fallback" for key in entry}
     notes = [f"No exact Codex template for canonical model {canonical!r}"]
+
+    name = str(row["model_name"])
     info = row.get("model_info") or {}
     params = _params(row)
+
     provenance.update({
         "slug": "LiteLLM model_name",
         "display_name": "derived: LiteLLM model_name",
         "description": "derived: canonical model identity",
         "model_messages": "codex:version-matched-fallback-prompt",
     })
+
     max_input = info.get("max_input_tokens")
     if isinstance(max_input, int) and max_input > 0:
         entry["context_window"] = max_input
@@ -235,8 +267,10 @@ def _build_foreign(row: dict[str, Any], canonical: str, fallback_prompt: str) ->
         provenance["max_context_window"] = "LiteLLM max_input_tokens (foreign-model approximation)"
     else:
         notes.append("LiteLLM max_input_tokens is unavailable; using Codex fallback context_window=272000")
+
     entry["input_modalities"] = _modalities(row)
     provenance["input_modalities"] = "LiteLLM modality capability flags"
+
     supports_reasoning = info.get("supports_reasoning") is True
     levels = _reasoning_presets_foreign(row)
     entry["supported_reasoning_levels"] = levels
@@ -245,18 +279,65 @@ def _build_foreign(row: dict[str, Any], canonical: str, fallback_prompt: str) ->
     provenance["default_reasoning_level"] = "conservative: no foreign-model default"
     if supports_reasoning and not levels:
         notes.append("LiteLLM confirms reasoning but no explicit effort levels; none are advertised to Codex")
+
+    # `supports_reasoning` does not prove support for Responses reasoning.summary.
     entry["supports_reasoning_summary_parameter"] = False
     provenance["supports_reasoning_summary_parameter"] = "conservative: no direct LiteLLM evidence"
+
     entry["support_verbosity"] = "verbosity" in params
     entry["default_verbosity"] = None
     provenance["support_verbosity"] = "LiteLLM supported_openai_params"
     provenance["default_verbosity"] = "derived: no foreign-model default"
+
     if "parallel_tool_calls" in params:
         entry["supports_parallel_tool_calls"] = info.get("supports_function_calling") is True
         provenance["supports_parallel_tool_calls"] = "LiteLLM parallel_tool_calls + explicit supports_function_calling"
+
+    # Intentionally do not turn on Codex search/tool-mode/multi-agent behavior for
+    # a foreign model solely because LiteLLM advertises a similarly named feature.
     if info.get("supports_web_search") is True:
         notes.append("LiteLLM advertises web search; Codex supports_search_tool remains disabled for foreign model")
-    return GeneratedModel(entry, provenance, canonical, None, "foreign", notes)
+
+    _apply_foreign_schema_guard(entry, provenance, model_info_schema, codex_catalog)
+
+    return GeneratedModel(
+        entry=entry,
+        provenance=provenance,
+        canonical_model=canonical,
+        template_slug=None,
+        kind="foreign",
+        notes=notes,
+    )
+
+
+def _apply_foreign_schema_guard(
+    entry: dict[str, Any],
+    provenance: dict[str, str],
+    schema: ModelInfoSchema,
+    codex_catalog: dict[str, Any],
+) -> None:
+    missing = sorted(schema.required_fields - entry.keys())
+    if not missing:
+        return
+
+    models = codex_catalog.get("models") or []
+    unsupported: list[str] = []
+    for field in missing:
+        if models and all(isinstance(model, dict) and field in model for model in models):
+            first = models[0][field]
+            if all(model[field] == first for model in models[1:]):
+                entry[field] = deepcopy(first)
+                provenance[field] = "codex:catalog-invariant-required-field"
+                continue
+        unsupported.append(field)
+
+    if unsupported:
+        joined = ", ".join(unsupported)
+        raise AppError(
+            "Version-matched Codex ModelInfo has required field(s) that this generator cannot safely synthesize "
+            f"for a foreign model: {joined}. Refusing to copy model-specific donor values; upgrade "
+            "litellm-codex-models or use an exact Codex template."
+        )
 
 
 def generate_model(
@@ -264,11 +345,14 @@ def generate_model(
     codex_index: dict[str, dict[str, Any]],
     *,
     fallback_prompt: str | None = None,
+    model_info_schema: ModelInfoSchema | None = None,
+    codex_catalog: dict[str, Any] | None = None,
 ) -> GeneratedModel:
     template_slug, canonical = resolve_template(row, codex_index)
     name = str(row.get("model_name") or "")
     if not name:
         raise AppError("Selected LiteLLM row has no model_name")
+
     if template_slug is not None:
         entry = deepcopy(codex_index[template_slug])
         provenance = {key: f"codex:exact-template:{template_slug}" for key in entry}
@@ -280,10 +364,20 @@ def generate_model(
             provenance["display_name"] = "derived: LiteLLM alias"
             notes.append(f"Alias resolves to exact Codex template {template_slug}")
         _overlay_exact(entry, row, provenance, notes)
-        return GeneratedModel(entry, provenance, canonical, template_slug, "exact", notes)
+        return GeneratedModel(
+            entry=entry,
+            provenance=provenance,
+            canonical_model=canonical,
+            template_slug=template_slug,
+            kind="exact",
+            notes=notes,
+        )
+
     if fallback_prompt is None:
         raise AppError("Foreign model generation requires the version-matched Codex fallback prompt")
-    return _build_foreign(row, canonical, fallback_prompt)
+    if model_info_schema is None or codex_catalog is None:
+        raise AppError("Foreign model generation requires the version-matched Codex ModelInfo schema")
+    return _build_foreign(row, canonical, fallback_prompt, model_info_schema, codex_catalog)
 
 
 def generate_catalog(
@@ -291,12 +385,19 @@ def generate_catalog(
     codex_catalog: dict[str, Any],
     *,
     fallback_prompt: str | None = None,
+    model_info_schema: ModelInfoSchema | None = None,
 ) -> tuple[dict[str, Any], dict[str, GeneratedModel]]:
     index = {model["slug"]: model for model in codex_catalog["models"]}
     generated: list[dict[str, Any]] = []
     explanations: dict[str, GeneratedModel] = {}
     for row in rows:
-        model = generate_model(row, index, fallback_prompt=fallback_prompt)
+        model = generate_model(
+            row,
+            index,
+            fallback_prompt=fallback_prompt,
+            model_info_schema=model_info_schema,
+            codex_catalog=codex_catalog,
+        )
         generated.append(model.entry)
         explanations[model.entry["slug"]] = model
     return {"models": generated}, explanations

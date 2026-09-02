@@ -86,6 +86,7 @@ litellm-codex-models \
   --input litellm.json \
   --catalog-file codex-models.json \
   --codex-prompt-file codex-prompt.md \
+  --codex-schema-file openai_models.rs \
   --output generated-models.json
 ```
 
@@ -99,7 +100,7 @@ model_catalog_json = "/absolute/path/to/generated-models.json"
 
 For an **exact Codex template match**, `context_window` and `max_context_window` remain the Codex values. LiteLLM `max_input_tokens` is treated as validation evidence because the two fields do not have identical semantics.
 
-For a **foreign model** with no Codex template, v0.1 uses LiteLLM `max_input_tokens` as the best available approximation for both context fields and marks that provenance explicitly. This is intentionally visible in `explain` rather than hidden as an assumption.
+For a **foreign model** with no Codex template, the generator uses LiteLLM `max_input_tokens` as the best available approximation for both context fields and marks that provenance explicitly. This is intentionally visible in `explain` rather than hidden as an assumption.
 
 ## v0.1 limitations
 
@@ -118,3 +119,4 @@ The v0.2 branch tightens foreign-model synthesis discovered during real-world va
 - Generic reasoning support no longer implies support for the Responses `reasoning.summary` parameter.
 - Parallel tool calls require both the transport parameter and explicit function-calling support.
 - `explain` collapses large instruction/message payloads by default; `--full` restores the complete dump.
+- Foreign generation validates itself against the version-matched Rust `ModelInfo` schema. Newly required fields are copied only when their value is invariant across the whole Codex catalog; model-specific required fields fail closed instead of leaking a donor value.
