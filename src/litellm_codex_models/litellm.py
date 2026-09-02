@@ -7,6 +7,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from . import __version__
 from .config import LiteLLMConfig
 from .errors import AppError
 
@@ -48,7 +49,7 @@ def fetch_payload(config: LiteLLMConfig) -> list[dict[str, Any]]:
         headers={
             "Authorization": f"Bearer {key}",
             "Accept": "application/json",
-            "User-Agent": "litellm-codex-models/0.1",
+            "User-Agent": f"litellm-codex-models/{__version__}",
         },
     )
     try:

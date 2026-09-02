@@ -25,4 +25,4 @@ def test_cli_version_does_not_require_config(capsys):
     with pytest.raises(SystemExit) as exc_info:
         build_parser().parse_args(["--version"])
     assert exc_info.value.code == 0
-    assert capsys.readouterr().out == "litellm-codex-models 0.2.0\n"
+    assert capsys.readouterr().out == "litellm-codex-models 0.2.1\n"
