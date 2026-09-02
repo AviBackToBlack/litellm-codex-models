@@ -14,11 +14,48 @@ The key design rule is **Codex template inheritance + LiteLLM capability evidenc
 
 ## Install
 
+Requires Python 3.11+ and no third-party runtime dependencies.
+
+### Stable release from GitHub
+
+After the `v0.2.0` tag exists, install that exact release directly from GitHub:
+
 ```bash
-python -m pip install -e .
+python -m pip install "git+https://github.com/AviBackToBlack/litellm-codex-models.git@v0.2.0"
 ```
 
-Requires Python 3.11+ and no third-party runtime dependencies.
+This is the recommended VCS install because it is reproducible.
+
+### Latest `main`
+
+To install the current development head:
+
+```bash
+python -m pip install "git+https://github.com/AviBackToBlack/litellm-codex-models.git"
+```
+
+To force-refresh an existing `main` install when the package version has not changed:
+
+```bash
+python -m pip install --upgrade --force-reinstall "git+https://github.com/AviBackToBlack/litellm-codex-models.git"
+```
+
+### Local checkout
+
+For development from a clone:
+
+```bash
+python -m pip install -e ".[test]"
+```
+
+Verify the installed CLI:
+
+```bash
+litellm-codex-models --version
+litellm-codex-models --help
+```
+
+The repository CI smoke-tests installation of the exact PR/push revision through a `pip` VCS URL, so `git+https://...` installation is continuously covered by the required `build` check.
 
 ## Configure
 
@@ -102,21 +139,21 @@ For an **exact Codex template match**, `context_window` and `max_context_window`
 
 For a **foreign model** with no Codex template, the generator uses LiteLLM `max_input_tokens` as the best available approximation for both context fields and marks that provenance explicitly. This is intentionally visible in `explain` rather than hidden as an assumption.
 
-## v0.1 limitations
+## v0.2 highlights
+
+- Model-specific Codex donor fields are never inherited by foreign models.
+- The generic Codex fallback prompt comes from the same version-matched `rust-v<version>` tag.
+- Reasoning effort levels are advertised only from explicit LiteLLM evidence: `reasoning_effort_levels` and/or explicit per-effort capability flags. Unknown values are ignored, and explicit `false` denials win.
+- Generic reasoning support does not imply support for the Responses `reasoning.summary` parameter.
+- Parallel tool calls require both the transport parameter and explicit function-calling support.
+- `explain` collapses large instruction/message payloads by default; `--full` restores the complete dump.
+- Foreign generation validates itself against the version-matched Rust `ModelInfo` schema. Newly required fields are copied only when their value is invariant across the whole Codex catalog; model-specific required fields fail closed instead of leaking a donor value.
+- The schema parser handles rustfmt-wrapped multiline declarations and restricted/private visibility so required-field drift cannot silently bypass the guard.
+
+## Current limitations
 
 - Duplicate LiteLLM `model_name` values are rejected. Multi-deployment aggregation is planned rather than guessed.
 - Foreign-model web search remains disabled even when LiteLLM advertises web search; Codex search-tool wire semantics need an explicit compatibility rule.
 - Foreign-model context-window mapping is an approximation, as described above.
-- The exact allowlist supports strings only in v0.1; per-model overrides/globs are deliberately deferred.
-
-## v0.2 development
-
-The v0.2 branch tightens foreign-model synthesis discovered during real-world validation:
-
-- Model-specific Codex donor fields are never inherited by foreign models.
-- The generic Codex fallback prompt comes from the same version-matched `rust-v<version>` tag.
-- Reasoning effort levels are advertised only when LiteLLM explicitly marks that effort as supported; `null` remains unknown.
-- Generic reasoning support no longer implies support for the Responses `reasoning.summary` parameter.
-- Parallel tool calls require both the transport parameter and explicit function-calling support.
-- `explain` collapses large instruction/message payloads by default; `--full` restores the complete dump.
-- Foreign generation validates itself against the version-matched Rust `ModelInfo` schema. Newly required fields are copied only when their value is invariant across the whole Codex catalog; model-specific required fields fail closed instead of leaking a donor value.
+- The exact allowlist supports strings only; per-model overrides/globs are deliberately deferred.
+- Explicit local `--catalog-file` / `--codex-prompt-file` / `--codex-schema-file` overrides are a caller trust boundary. The normal auto/ref path fetches all resources from one version-matched Codex ref.

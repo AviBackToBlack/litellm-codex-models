@@ -63,4 +63,16 @@ jobs:
         run: |
           python -m venv .wheel-venv
           .wheel-venv/bin/python -m pip install --no-deps dist/*.whl
+          .wheel-venv/bin/litellm-codex-models --version
           .wheel-venv/bin/litellm-codex-models --help
+
+      - name: Install exact Git revision through pip VCS URL
+        shell: bash
+        env:
+          VCS_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          VCS_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python -m venv .git-venv
+          .git-venv/bin/python -m pip install --no-deps "git+https://github.com/${VCS_REPOSITORY}.git@${VCS_REF}"
+          .git-venv/bin/litellm-codex-models --version
+          .git-venv/bin/litellm-codex-models --help
