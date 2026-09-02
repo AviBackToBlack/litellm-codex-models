@@ -32,3 +32,51 @@ pub struct ModelInfo {
         "new_required",
     }
     assert schema.required_fields == {"slug", "new_required"}
+
+
+def test_parse_model_info_schema_multiline_and_restricted_visibility_fields():
+    source = r'''
+pub struct ModelInfo {
+    pub slug: String,
+    pub(crate) wrapped_required:
+        std::collections::BTreeMap<
+            String,
+            Vec<String>,
+        >,
+    #[serde(default)]
+    private_defaulted:
+        std::collections::BTreeMap<
+            String,
+            Vec<String>,
+        >,
+    private_optional:
+        Option<
+            String,
+        >,
+}
+'''
+    schema = parse_model_info_schema(source)
+    assert schema.fields == {
+        "slug",
+        "wrapped_required",
+        "private_defaulted",
+        "private_optional",
+    }
+    assert schema.required_fields == {"slug", "wrapped_required"}
+
+
+def test_parse_model_info_schema_rejects_unterminated_multiline_field():
+    source = r'''
+pub struct ModelInfo {
+    pub slug: String,
+    pub broken:
+        Vec<
+            String,
+}
+'''
+    try:
+        parse_model_info_schema(source)
+    except Exception as exc:
+        assert "Unterminated field declaration" in str(exc)
+    else:
+        raise AssertionError("expected unterminated field declaration to fail closed")
