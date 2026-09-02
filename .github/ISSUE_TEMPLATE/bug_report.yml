@@ -1,0 +1,49 @@
+name: Bug report
+description: Report incorrect catalog generation, model mapping, or CLI behavior
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please redact API keys, internal URLs/hostnames, account identifiers, and other sensitive LiteLLM configuration before posting output.
+  - type: input
+    id: version
+    attributes:
+      label: litellm-codex-models version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: codex
+    attributes:
+      label: Codex version
+      placeholder: "codex-cli 0.152.0"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and sanitized configuration
+      description: Do not include secrets or internal service URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Sanitized `explain` output is especially useful.
+    validations:
+      required: true
+  - type: textarea
+    id: model-info
+    attributes:
+      label: Relevant sanitized LiteLLM metadata
+      description: Include only the affected model entry and remove secrets/internal infrastructure data.
+      render: json
