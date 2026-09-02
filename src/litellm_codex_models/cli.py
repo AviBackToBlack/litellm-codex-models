@@ -8,6 +8,7 @@ import sys
 import tempfile
 from typing import Any
 
+from . import __version__
 from .codex import (
     catalog_index,
     fetch_catalog,
@@ -213,6 +214,7 @@ def cmd_explain(args: argparse.Namespace, config: AppConfig) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="litellm-codex-models")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--config", default="litellm-codex-models.toml")
     sub = parser.add_subparsers(dest="command", required=True)
 
