@@ -12,6 +12,9 @@ license = { text = "MIT" }
 authors = [{ name = "AviBackToBlack" }]
 dependencies = []
 
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
 [project.scripts]
 litellm-codex-models = "litellm_codex_models.cli:main"
 
