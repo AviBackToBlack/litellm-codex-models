@@ -147,6 +147,31 @@ def test_foreign_reasoning_does_not_invent_null_efforts():
     assert generated.entry["supports_reasoning_summary_parameter"] is False
 
 
+def test_foreign_reasoning_uses_explicit_reasoning_effort_levels_in_codex_order():
+    generated = generate_model(
+        {
+            "model_name": "foreign-explicit-levels",
+            "litellm_params": {"model": "vendor/foreign-explicit-levels"},
+            "model_info": {
+                "mode": "chat",
+                "supports_reasoning": True,
+                "supports_low_reasoning_effort": False,
+                "supported_openai_params": ["reasoning_effort"],
+                "reasoning_effort_levels": ["high", "bogus", "medium", "low", "high", 123],
+            },
+        },
+        INDEX,
+        fallback_prompt=FALLBACK_PROMPT,
+        model_info_schema=SCHEMA,
+        codex_catalog=CATALOG,
+    )
+    assert [item["effort"] for item in generated.entry["supported_reasoning_levels"]] == [
+        "medium",
+        "high",
+    ]
+    assert generated.entry["default_reasoning_level"] is None
+
+
 def test_foreign_parallel_tools_require_explicit_function_calling_true():
     generated = generate_model(
         {
