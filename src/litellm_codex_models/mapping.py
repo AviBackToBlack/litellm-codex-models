@@ -120,9 +120,30 @@ def _reasoning_presets_foreign(row: dict[str, Any]) -> list[dict[str, str]]:
     if "reasoning_effort" not in params:
         return []
 
-    # Foreign models advertise only what LiteLLM explicitly confirms. `null`
-    # remains unknown and never becomes an inferred effort level.
-    efforts = [effort for effort, flag in EFFORT_FLAG_MAP.items() if info.get(flag) is True]
+    # Foreign models advertise only what LiteLLM explicitly confirms. This can
+    # come from either the explicit reasoning_effort_levels sequence or the
+    # per-effort capability flags. `null` remains unknown and never becomes an
+    # inferred effort level. Explicit false flags are denials and win over a
+    # contradictory positive list entry.
+    explicit_levels = info.get("reasoning_effort_levels")
+    confirmed: set[str] = set()
+    if isinstance(explicit_levels, (list, tuple)):
+        confirmed.update(
+            effort
+            for effort in explicit_levels
+            if isinstance(effort, str) and effort in REASONING_DESCRIPTIONS
+        )
+
+    confirmed.update(
+        effort for effort, flag in EFFORT_FLAG_MAP.items() if info.get(flag) is True
+    )
+    confirmed.difference_update(
+        effort for effort, flag in EFFORT_FLAG_MAP.items() if info.get(flag) is False
+    )
+
+    # REASONING_DESCRIPTIONS defines Codex's stable display order. Returning in
+    # that order makes output deterministic regardless of LiteLLM list order.
+    efforts = [effort for effort in REASONING_DESCRIPTIONS if effort in confirmed]
 
     return [
         {"effort": effort, "description": REASONING_DESCRIPTIONS[effort]}
@@ -275,7 +296,7 @@ def _build_foreign(
     levels = _reasoning_presets_foreign(row)
     entry["supported_reasoning_levels"] = levels
     entry["default_reasoning_level"] = None
-    provenance["supported_reasoning_levels"] = "LiteLLM explicit reasoning-effort flags only"
+    provenance["supported_reasoning_levels"] = "LiteLLM explicit reasoning-effort levels/flags only"
     provenance["default_reasoning_level"] = "conservative: no foreign-model default"
     if supports_reasoning and not levels:
         notes.append("LiteLLM confirms reasoning but no explicit effort levels; none are advertised to Codex")
