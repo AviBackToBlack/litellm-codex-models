@@ -1,19 +1,44 @@
 version: 2
+
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Dublin
+    rebase-strategy: disabled
+    open-pull-requests-limit: 5
     labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "ci(deps)"
     groups:
-      minor-patch:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
         update-types: ["minor", "patch"]
 
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+      time: "06:10"
+      timezone: Europe/Dublin
+    rebase-strategy: disabled
+    open-pull-requests-limit: 5
     labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "deps"
     groups:
-      minor-patch:
+      routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      security-minor-patch:
+        applies-to: security-updates
+        patterns: ["*"]
         update-types: ["minor", "patch"]
