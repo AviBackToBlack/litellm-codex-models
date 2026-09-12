@@ -157,3 +157,7 @@ For a **foreign model** with no Codex template, the generator uses LiteLLM `max_
 - Foreign-model context-window mapping is an approximation, as described above.
 - The exact allowlist supports strings only; per-model overrides/globs are deliberately deferred.
 - Explicit local `--catalog-file` / `--codex-prompt-file` / `--codex-schema-file` overrides are a caller trust boundary. The normal auto/ref path fetches all resources from one version-matched Codex ref.
+
+## Security
+
+Please report security issues according to [SECURITY.md](SECURITY.md).
