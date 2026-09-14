@@ -47,6 +47,9 @@ class DeploymentEvidence:
     mode: str
     template_slug: str | None
     canonical_candidates: tuple[str, ...]
+    capabilities: tuple[tuple[str, str], ...]
+    max_input_tokens: int | None
+    max_output_tokens: int | None
     supported_openai_params: tuple[str, ...] | None
     reasoning_efforts: tuple[str, ...] | None
 
@@ -222,6 +225,12 @@ def _raw_limit_token(value: Any) -> str:
     return str(normalized) if normalized is not None else "unknown"
 
 
+def _optional_set_token(value: tuple[str, ...] | None) -> str:
+    if value is None:
+        return "?"
+    return "=" + "\x1f".join(value)
+
+
 def _deployment_evidence(
     row: dict[str, Any], codex_index: dict[str, dict[str, Any]]
 ) -> DeploymentEvidence:
@@ -237,12 +246,20 @@ def _deployment_evidence(
         mode=mode,
         template_slug=template_slug,
         canonical_candidates=tuple(canonical_candidates(row)),
+        capabilities=tuple(
+            (field, _raw_boolean_token(info.get(field))) for field in CAPABILITY_FIELDS
+        ),
+        max_input_tokens=_positive_int(info.get("max_input_tokens")),
+        max_output_tokens=_positive_int(info.get("max_output_tokens")),
         supported_openai_params=_normalize_string_set(info.get("supported_openai_params")),
         reasoning_efforts=_deployment_reasoning_efforts(row),
     )
 
 
 def _deployment_sort_key(deployment: DeploymentEvidence) -> tuple[str, ...]:
+    capability_token = "\x1e".join(
+        f"{field}={value}" for field, value in deployment.capabilities
+    )
     return (
         deployment.provider or "",
         deployment.model or "",
@@ -250,8 +267,11 @@ def _deployment_sort_key(deployment: DeploymentEvidence) -> tuple[str, ...]:
         deployment.mode,
         deployment.template_slug or "",
         "\x1f".join(deployment.canonical_candidates),
-        "\x1f".join(deployment.supported_openai_params or ()),
-        "\x1f".join(deployment.reasoning_efforts or ()),
+        capability_token,
+        str(deployment.max_input_tokens) if deployment.max_input_tokens is not None else "?",
+        str(deployment.max_output_tokens) if deployment.max_output_tokens is not None else "?",
+        _optional_set_token(deployment.supported_openai_params),
+        _optional_set_token(deployment.reasoning_efforts),
     )
 
 
