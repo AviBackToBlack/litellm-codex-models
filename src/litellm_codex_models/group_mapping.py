@@ -6,6 +6,7 @@ from typing import Any
 
 from .aggregation import ModelGroupEvidence, aggregate_model_group
 from .errors import AppError
+from .litellm import SelectedModelGroup
 from .mapping import (
     EFFORT_FLAG_MAP,
     GeneratedModel,
@@ -21,24 +22,35 @@ from .schema import ModelInfoSchema
 class PreparedModelGroup:
     rows: tuple[dict[str, Any], ...]
     evidence: ModelGroupEvidence
+    selection_source: str | None = None
 
 
 @dataclass
 class GroupGeneratedModel(GeneratedModel):
     group_evidence: dict[str, Any] | None = None
+    selection_source: str | None = None
 
 
 def prepare_model_groups(
-    groups: list[list[dict[str, Any]]],
+    groups: list[list[dict[str, Any]] | SelectedModelGroup],
     codex_index: dict[str, dict[str, Any]],
 ) -> list[PreparedModelGroup]:
-    return [
-        PreparedModelGroup(
-            rows=tuple(group),
-            evidence=aggregate_model_group(group, codex_index),
+    prepared: list[PreparedModelGroup] = []
+    for selected in groups:
+        if isinstance(selected, SelectedModelGroup):
+            rows = selected.rows
+            selection_source = selected.selection_source
+        else:
+            rows = tuple(selected)
+            selection_source = None
+        prepared.append(
+            PreparedModelGroup(
+                rows=rows,
+                evidence=aggregate_model_group(list(rows), codex_index),
+                selection_source=selection_source,
+            )
         )
-        for group in groups
-    ]
+    return prepared
 
 
 def _group_evidence_payload(group: ModelGroupEvidence) -> dict[str, Any]:
@@ -124,7 +136,11 @@ def _synthetic_row(group: ModelGroupEvidence) -> dict[str, Any]:
     }
 
 
-def _wrap(model: GeneratedModel, group: ModelGroupEvidence) -> GroupGeneratedModel:
+def _wrap(
+    model: GeneratedModel,
+    group: ModelGroupEvidence,
+    selection_source: str | None,
+) -> GroupGeneratedModel:
     return GroupGeneratedModel(
         entry=model.entry,
         provenance=model.provenance,
@@ -133,6 +149,7 @@ def _wrap(model: GeneratedModel, group: ModelGroupEvidence) -> GroupGeneratedMod
         kind=model.kind,
         notes=model.notes,
         group_evidence=_group_evidence_payload(group),
+        selection_source=selection_source,
     )
 
 
@@ -202,7 +219,7 @@ def generate_prepared_model(
             model_info_schema=model_info_schema,
             codex_catalog=codex_catalog,
         )
-        return _wrap(model, group)
+        return _wrap(model, group, prepared.selection_source)
 
     synthetic = _synthetic_row(group)
 
@@ -230,6 +247,7 @@ def generate_prepared_model(
             kind="exact",
             notes=notes,
             group_evidence=_group_evidence_payload(group),
+            selection_source=prepared.selection_source,
         )
 
     if group.foreign_synthesis_blockers:
@@ -272,7 +290,7 @@ def generate_prepared_model(
                 "LiteLLM model-group parameter/function/parallel-capability guarantee"
             )
 
-    return _wrap(model, group)
+    return _wrap(model, group, prepared.selection_source)
 
 
 def generate_prepared_catalog(
