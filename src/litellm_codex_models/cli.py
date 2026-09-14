@@ -209,7 +209,11 @@ def _build(
     else:
         catalog, source = _load_codex_catalog(config, args.catalog_file, args.codex_ref)
     index = catalog_index(catalog)
-    prepared = prepare_model_groups(selected_groups, index)
+    prepared = prepare_model_groups(
+        selected_groups,
+        index,
+        config.model_overrides,
+    )
     has_foreign = any(group.evidence.kind == "foreign" for group in prepared)
     fallback_prompt = None
     model_info_schema = None
