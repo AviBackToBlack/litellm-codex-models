@@ -88,6 +88,19 @@ def _params(row: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _validate_deployment_metadata(row: dict[str, Any]) -> None:
+    invalid_fields = [
+        field
+        for field in ("model_info", "litellm_params")
+        if (value := row.get(field)) is not None and not isinstance(value, dict)
+    ]
+    if invalid_fields:
+        raise AppError(
+            "Deployment metadata must contain object-valued model_info and litellm_params; "
+            "invalid field(s): " + ", ".join(invalid_fields)
+        )
+
+
 def _string(value: Any) -> str | None:
     if isinstance(value, str):
         value = value.strip()
@@ -431,6 +444,9 @@ def aggregate_model_group(
 ) -> ModelGroupEvidence:
     if not rows:
         raise AppError("Cannot aggregate an empty LiteLLM model group")
+
+    for row in rows:
+        _validate_deployment_metadata(row)
 
     raw_names = [row.get("model_name") for row in rows]
     if (
