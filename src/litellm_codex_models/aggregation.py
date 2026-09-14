@@ -187,15 +187,20 @@ def _deployment_reasoning_effort_evidence(
 ) -> tuple[tuple[str, str], ...]:
     info = _info(row)
     explicit_levels = info.get("reasoning_effort_levels")
-    listed = {
-        effort
-        for effort in explicit_levels
-        if isinstance(effort, str) and effort in REASONING_DESCRIPTIONS
-    } if isinstance(explicit_levels, (list, tuple)) else set()
+    listed = (
+        {
+            effort
+            for effort in explicit_levels
+            if isinstance(effort, str) and effort in REASONING_DESCRIPTIONS
+        }
+        if isinstance(explicit_levels, (list, tuple))
+        else set()
+    )
 
     evidence: list[tuple[str, str]] = []
-    for effort, flag in EFFORT_FLAG_MAP.items():
-        raw_flag = info.get(flag)
+    for effort in REASONING_DESCRIPTIONS:
+        flag = EFFORT_FLAG_MAP.get(effort)
+        raw_flag = info.get(flag) if flag is not None else None
         if raw_flag is False:
             token = "false"
         elif raw_flag is True or effort in listed:
@@ -244,7 +249,8 @@ def _denied_reasoning_efforts(rows: list[dict[str, Any]]) -> tuple[str, ...]:
     return tuple(
         effort
         for effort in REASONING_DESCRIPTIONS
-        if any(_info(row).get(EFFORT_FLAG_MAP[effort]) is False for row in rows)
+        if (flag := EFFORT_FLAG_MAP.get(effort)) is not None
+        and any(_info(row).get(flag) is False for row in rows)
     )
 
 
