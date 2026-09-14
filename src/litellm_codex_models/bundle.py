@@ -14,7 +14,7 @@ from .errors import AppError
 BUNDLE_SCHEMA_VERSION = 1
 RESOURCE_ROLES = ("catalog", "prompt", "schema")
 _SHA256_RE = re.compile(r"^[0-9A-Fa-f]{64}$")
-_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:$")
+_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:.*$")
 
 
 @dataclass(frozen=True)
@@ -148,6 +148,8 @@ def load_codex_bundle(path: str | Path) -> CodexBundle:
         raise AppError(f"Codex bundle manifest is not valid UTF-8: {manifest_path}") from exc
     except json.JSONDecodeError as exc:
         raise AppError(f"Invalid Codex bundle manifest JSON in {manifest_path}: {exc}") from exc
+    except OSError as exc:
+        raise AppError(f"Failed to read Codex bundle manifest {manifest_path}: {exc}") from exc
 
     if not isinstance(payload, dict):
         raise AppError("Codex bundle manifest must be a JSON object")
