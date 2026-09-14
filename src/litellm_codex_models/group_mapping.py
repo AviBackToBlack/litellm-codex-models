@@ -149,6 +149,33 @@ def _legacy_single_row_is_safe(
     return legacy_slug is None
 
 
+def _apply_exact_group_capability_denials(
+    entry: dict[str, Any],
+    group: ModelGroupEvidence,
+    provenance: dict[str, str],
+) -> None:
+    reasoning = group.capabilities["supports_reasoning"]
+    if reasoning.state == "denied":
+        if isinstance(entry.get("supported_reasoning_levels"), list):
+            entry["supported_reasoning_levels"] = []
+            provenance["supported_reasoning_levels"] = (
+                "codex:exact-template downgraded by LiteLLM model-group supports_reasoning=false"
+            )
+        if "default_reasoning_level" in entry:
+            entry["default_reasoning_level"] = None
+            provenance["default_reasoning_level"] = (
+                "derived: disabled by LiteLLM model-group reasoning denial"
+            )
+
+    parallel = group.capabilities["supports_parallel_function_calling"]
+    if parallel.state == "denied" and entry.get("supports_parallel_tool_calls") is True:
+        entry["supports_parallel_tool_calls"] = False
+        provenance["supports_parallel_tool_calls"] = (
+            "codex:exact-template downgraded by LiteLLM model-group "
+            "supports_parallel_function_calling=false"
+        )
+
+
 def generate_prepared_model(
     prepared: PreparedModelGroup,
     codex_index: dict[str, dict[str, Any]],
@@ -185,6 +212,7 @@ def generate_prepared_model(
             provenance["display_name"] = "derived: LiteLLM model-group alias"
             notes.append(f"Group resolves to exact Codex template {group.template_slug}")
         _overlay_exact(entry, synthetic, provenance, notes)
+        _apply_exact_group_capability_denials(entry, group, provenance)
         notes.extend(f"Group disagreement: {item}" for item in group.disagreements)
         return GroupGeneratedModel(
             entry=entry,
@@ -222,10 +250,18 @@ def generate_prepared_model(
     model.provenance["input_modalities"] = "LiteLLM model-group guaranteed capability evidence"
     model.provenance["supported_reasoning_levels"] = "LiteLLM model-group explicit reasoning-effort intersection"
     model.provenance["support_verbosity"] = "LiteLLM model-group supported_openai_params intersection"
+
     if "supports_parallel_tool_calls" in model.entry:
-        model.provenance["supports_parallel_tool_calls"] = (
-            "LiteLLM model-group parameter/capability guarantee"
-        )
+        parallel = group.capabilities["supports_parallel_function_calling"]
+        if parallel.state != "guaranteed":
+            model.entry["supports_parallel_tool_calls"] = False
+            model.provenance["supports_parallel_tool_calls"] = (
+                "conservative: LiteLLM model-group parallel-function capability not guaranteed"
+            )
+        else:
+            model.provenance["supports_parallel_tool_calls"] = (
+                "LiteLLM model-group parameter/function/parallel-capability guarantee"
+            )
 
     return _wrap(model, group)
 
