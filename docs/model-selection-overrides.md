@@ -14,7 +14,7 @@ This work does not:
 - allow arbitrary Codex catalog fields to be overwritten;
 - allow overrides to force exact-template identity;
 - allow `mode`, provider, deployment model, or base-model identity to be overridden;
-- enable foreign-model web search;
+- map LiteLLM `supports_web_search` to Codex hosted-search behavior or `supports_search_tool`;
 - infer capabilities from model names or provider names;
 - add exclusion patterns or regular-expression syntax in v0.3.
 
@@ -129,7 +129,7 @@ In particular:
 - effective `supports_reasoning = false` disables reasoning efforts and reasoning-summary transport on generated output;
 - effective `supports_function_calling = false` prevents parallel tool calls;
 - parallel tool calls for foreign models still require all existing parameter/function/parallel guarantees;
-- an override cannot turn on foreign Codex web search. `supports_web_search = true` may alter the recorded LiteLLM evidence or prevent an exact-template downgrade, but foreign `supports_search_tool` remains disabled until the separate web-search compatibility work is complete.
+- `supports_web_search` overrides change recorded LiteLLM compatibility evidence only. They do not mutate Codex `supports_search_tool` and are not sufficient proof for hosted-search enablement. Hosted web search also depends on version-matched Codex provider/runtime semantics; see `foreign-web-search.md`.
 
 Directly contradictory settings inside one override table fail configuration validation. At minimum:
 
