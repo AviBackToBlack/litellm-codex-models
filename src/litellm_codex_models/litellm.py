@@ -12,9 +12,6 @@ from .config import LiteLLMConfig
 from .errors import AppError
 
 
-ALLOWED_MODES = {"chat", "responses"}
-
-
 def _validate_payload(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         raise AppError("LiteLLM response must be a JSON object with a data[] array")
@@ -63,48 +60,32 @@ def fetch_payload(config: LiteLLMConfig) -> list[dict[str, Any]]:
     return _validate_payload(payload)
 
 
-def index_by_model_name(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    duplicates: list[str] = []
+def index_model_groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         name = row.get("model_name")
         if not isinstance(name, str) or not name:
             continue
-        if name in result:
-            duplicates.append(name)
-        else:
-            result[name] = row
-    if duplicates:
-        duplicate_text = ", ".join(sorted(set(duplicates)))
-        raise AppError(
-            "v0.1 requires unique model_name values; duplicate LiteLLM model groups found: "
-            + duplicate_text
-        )
+        result.setdefault(name, []).append(row)
     return result
 
 
-def select_models(
+def select_model_groups(
     rows: list[dict[str, Any]],
     allowlist: tuple[str, ...],
     *,
     strict: bool,
-) -> list[dict[str, Any]]:
-    index = index_by_model_name(rows)
-    selected: list[dict[str, Any]] = []
+) -> list[list[dict[str, Any]]]:
+    index = index_model_groups(rows)
+    selected: list[list[dict[str, Any]]] = []
     missing: list[str] = []
 
     for name in allowlist:
-        row = index.get(name)
-        if row is None:
+        group = index.get(name)
+        if group is None:
             missing.append(name)
             continue
-        mode = (row.get("model_info") or {}).get("mode")
-        if mode not in ALLOWED_MODES:
-            raise AppError(
-                f'Model "{name}" exists but is not Codex-eligible: mode={mode!r}; '
-                f"allowed modes are {sorted(ALLOWED_MODES)}"
-            )
-        selected.append(row)
+        selected.append(group)
 
     if missing and strict:
         raise AppError("Requested models not found in LiteLLM: " + ", ".join(missing))
