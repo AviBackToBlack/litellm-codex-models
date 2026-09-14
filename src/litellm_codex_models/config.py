@@ -32,10 +32,19 @@ class OutputConfig:
 @dataclass(frozen=True)
 class AppConfig:
     models: tuple[str, ...]
+    model_globs: tuple[str, ...]
     strict: bool
     litellm: LiteLLMConfig
     codex: CodexConfig
     output: OutputConfig
+
+
+def _string_list(raw: object, *, field: str) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not all(isinstance(x, str) and x for x in raw):
+        raise AppError(f'{field} must be an array of non-empty strings')
+    if len(raw) != len(set(raw)):
+        raise AppError(f'{field} contains duplicates')
+    return tuple(raw)
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -47,11 +56,15 @@ def load_config(path: str | Path) -> AppConfig:
     except tomllib.TOMLDecodeError as exc:
         raise AppError(f"Invalid TOML in {path}: {exc}") from exc
 
-    models = raw.get("models")
-    if not isinstance(models, list) or not models or not all(isinstance(x, str) and x for x in models):
-        raise AppError("Config must contain a non-empty top-level models = [\"...\"] array")
-    if len(models) != len(set(models)):
-        raise AppError("Config models allowlist contains duplicates")
+    models_raw = raw.get("models")
+    if models_raw is None:
+        raise AppError('Config must contain a top-level models = ["..."] array')
+    models = _string_list(models_raw, field="Config models allowlist")
+
+    model_globs_raw = raw.get("model_globs", [])
+    model_globs = _string_list(model_globs_raw, field="Config model_globs")
+    if not models and not model_globs:
+        raise AppError("Config must select at least one model through models or model_globs")
 
     filter_raw = raw.get("filter") or {}
     litellm_raw = raw.get("litellm") or {}
@@ -59,7 +72,8 @@ def load_config(path: str | Path) -> AppConfig:
     output_raw = raw.get("output") or {}
 
     return AppConfig(
-        models=tuple(models),
+        models=models,
+        model_globs=model_globs,
         strict=bool(filter_raw.get("strict", True)),
         litellm=LiteLLMConfig(
             url=litellm_raw.get("url"),
