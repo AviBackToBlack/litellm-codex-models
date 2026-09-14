@@ -19,10 +19,10 @@ Requires Python 3.11+ and no third-party runtime dependencies.
 
 ### Stable release from GitHub
 
-After the `v0.2.0` tag exists, install that exact release directly from GitHub:
+After the `v0.3.0` tag exists, install that exact release directly from GitHub:
 
 ```bash
-python -m pip install "git+https://github.com/AviBackToBlack/litellm-codex-models.git@v0.2.0"
+python -m pip install "git+https://github.com/AviBackToBlack/litellm-codex-models.git@v0.3.0"
 ```
 
 This is the recommended VCS install because it is reproducible.
@@ -182,6 +182,13 @@ For a **foreign group**, the generated catalog entry describes what is safe for 
 For an **exact Codex template match**, `context_window` and `max_context_window` remain the Codex values. LiteLLM `max_input_tokens` is treated as validation evidence because the two fields do not have identical semantics. A `max_input_tokens` override likewise changes the LiteLLM validation evidence only; it does not replace the exact template's Codex context fields.
 
 For a **foreign model group**, the generator uses the minimum known LiteLLM `max_input_tokens` across every deployment as the best safe approximation for both context fields. A multi-deployment foreign group with missing or invalid context evidence fails closed rather than advertising a guessed window. An explicit `max_input_tokens` override can supply the trusted effective evidence needed to synthesize that group. A single foreign deployment preserves the v0.2 fallback behavior.
+
+## v0.3 highlights
+
+- Multiple LiteLLM deployments sharing one user-facing `model_name` are aggregated deterministically with conservative safe-to-route capability evidence instead of rejecting duplicates or choosing an arbitrary donor.
+- Verified offline Codex bundles bind catalog/prompt/schema resources to one declared repository/ref identity and verify SHA-256 digests before generation.
+- Deterministic case-sensitive model globs and exact-keyed trusted `model_overrides` add controlled selection and compatibility correction with full `explain` provenance.
+- LiteLLM web-search evidence is explicitly decoupled from Codex `supports_search_tool`; hosted web-search compatibility remains provider/runtime controlled and is not inferred from similarly named metadata.
 
 ## v0.2 highlights
 
