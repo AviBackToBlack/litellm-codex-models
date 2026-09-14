@@ -50,6 +50,7 @@ def test_multi_deployment_exact_group_uses_aggregate_denials_without_donor_row()
             "azure/gpt-5.6-sol",
             max_input_tokens=220_000,
             supports_vision=True,
+            supports_parallel_function_calling=True,
             supported_openai_params=["parallel_tool_calls", "verbosity"],
         ),
         row(
@@ -57,6 +58,7 @@ def test_multi_deployment_exact_group_uses_aggregate_denials_without_donor_row()
             "openai/gpt-5.6-sol",
             max_input_tokens=180_000,
             supports_vision=False,
+            supports_parallel_function_calling=False,
             supported_openai_params=["parallel_tool_calls"],
         ),
     ]]
@@ -70,10 +72,41 @@ def test_multi_deployment_exact_group_uses_aggregate_denials_without_donor_row()
     assert model.template_slug == "gpt-5.6-sol"
     assert model.entry["input_modalities"] == ["text"]
     assert model.entry["support_verbosity"] is False
+    assert model.entry["supports_parallel_tool_calls"] is False
+    assert model.entry["supported_reasoning_levels"] == INDEX["gpt-5.6-sol"]["supported_reasoning_levels"]
     assert model.entry["context_window"] == INDEX["gpt-5.6-sol"]["context_window"]
     assert model.group_evidence["deployment_count"] == 2
     assert model.group_evidence["max_input_tokens"]["value"] == 180_000
+    assert model.group_evidence["capabilities"]["supports_parallel_function_calling"]["state"] == "denied"
     assert any("supports_vision" in item for item in model.group_evidence["disagreements"])
+
+
+def test_exact_group_reasoning_denial_clears_template_reasoning_levels():
+    groups = [[
+        row(
+            "shared-gpt",
+            "azure/gpt-5.6-sol",
+            supports_reasoning=True,
+            reasoning_effort_levels=["low", "high"],
+            supported_openai_params=["reasoning_effort"],
+        ),
+        row(
+            "shared-gpt",
+            "openai/gpt-5.6-sol",
+            supports_reasoning=False,
+            supported_openai_params=["reasoning_effort"],
+        ),
+    ]]
+
+    prepared = prepare_model_groups(groups, INDEX)
+    _generated, explanations = generate_prepared_catalog(prepared, CATALOG)
+    model = explanations["shared-gpt"]
+
+    assert model.kind == "exact"
+    assert model.entry["supported_reasoning_levels"] == []
+    assert model.entry["default_reasoning_level"] is None
+    assert model.group_evidence["capabilities"]["supports_reasoning"]["state"] == "denied"
+    assert "supports_reasoning=false" in model.provenance["supported_reasoning_levels"]
 
 
 def test_multi_deployment_foreign_group_uses_safe_intersections_and_min_context():
@@ -84,8 +117,10 @@ def test_multi_deployment_foreign_group_uses_safe_intersections_and_min_context(
             max_input_tokens=200_000,
             supports_vision=True,
             supports_reasoning=True,
+            supports_function_calling=True,
+            supports_parallel_function_calling=True,
             reasoning_effort_levels=["low", "high"],
-            supported_openai_params=["reasoning_effort", "verbosity"],
+            supported_openai_params=["reasoning_effort", "verbosity", "parallel_tool_calls"],
         ),
         row(
             "foreign-group",
@@ -93,8 +128,10 @@ def test_multi_deployment_foreign_group_uses_safe_intersections_and_min_context(
             max_input_tokens=150_000,
             supports_vision=True,
             supports_reasoning=True,
+            supports_function_calling=True,
+            supports_parallel_function_calling=False,
             reasoning_effort_levels=["high"],
-            supported_openai_params=["reasoning_effort", "verbosity"],
+            supported_openai_params=["reasoning_effort", "verbosity", "parallel_tool_calls"],
         ),
     ]]
 
@@ -112,10 +149,12 @@ def test_multi_deployment_foreign_group_uses_safe_intersections_and_min_context(
     assert model.canonical_model == "foreign-group"
     assert model.entry["input_modalities"] == ["text", "image"]
     assert model.entry["support_verbosity"] is True
+    assert model.entry["supports_parallel_tool_calls"] is False
     assert [item["effort"] for item in model.entry["supported_reasoning_levels"]] == ["high"]
     assert model.entry["supports_search_tool"] is False
     assert model.provenance["context_window"] == "LiteLLM model-group minimum max_input_tokens"
     assert model.group_evidence["deployment_count"] == 2
+    assert model.group_evidence["capabilities"]["supports_parallel_function_calling"]["state"] == "denied"
 
 
 def test_multi_deployment_foreign_group_with_unknown_context_fails_closed():
