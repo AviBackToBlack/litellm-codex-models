@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path
@@ -263,10 +264,16 @@ def _format_value(value: Any, *, full: bool = False) -> str:
 
 
 def cmd_explain(args: argparse.Namespace, config: AppConfig) -> int:
+    configured = args.model in config.models or any(
+        fnmatchcase(args.model, pattern) for pattern in config.model_globs
+    )
+    if not configured:
+        raise AppError(f'Model "{args.model}" is not present in the configured model selectors')
+
     _generated, explanations, source = _build(args, config)
     model = explanations.get(args.model)
     if model is None:
-        raise AppError(f'Model "{args.model}" was not selected by the configured model selectors')
+        raise AppError(f'Model "{args.model}" was not generated')
 
     print(f"model: {args.model}")
     print(f"kind: {model.kind}")
