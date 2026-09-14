@@ -88,7 +88,7 @@ Version-matched Codex template context values remain authoritative, as in v0.2. 
 
 ## Reasoning effort
 
-Foreign reasoning levels require explicit evidence.
+Foreign reasoning levels require explicit evidence from every possible routing destination.
 
 For each deployment, build its explicitly supported effort set from:
 
@@ -96,10 +96,12 @@ For each deployment, build its explicitly supported effort set from:
 - explicit per-effort `supports_*_reasoning_effort == true` flags;
 - with explicit per-effort `false` removing that effort.
 
-The group advertised effort set is the intersection of deployment-supported sets for deployments that have reasoning metadata, with these additional safety rules:
+A foreign group may advertise reasoning efforts only when every deployment provides sufficient reasoning metadata to establish an explicit supported-effort set. If any deployment's effort support is unknown, the group effort evidence is unknown and no efforts are advertised.
+
+When every deployment has sufficient metadata, the group advertised effort set is the intersection of all deployment-supported sets, with these additional safety rules:
 
 - a deployment-wide explicit denial of reasoning denies group reasoning;
-- unknown metadata never invents an effort;
+- unknown metadata remains unknown in evidence/provenance and never inherits support from another deployment;
 - an effort contradicted by explicit `false` on any deployment is removed;
 - result ordering follows Codex's stable effort order, not input order.
 
