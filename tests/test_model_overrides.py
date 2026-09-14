@@ -219,7 +219,7 @@ def test_foreign_context_override_removes_multi_deployment_synthesis_blocker():
     assert audit["effective"] == {"state": "known", "value": 123_456}
 
 
-def test_foreign_web_search_remains_disabled_even_when_override_is_true():
+def test_foreign_web_search_override_is_evidence_only_for_search_tool():
     source = row(
         "foreign-model",
         "vendor/model",
@@ -240,7 +240,9 @@ def test_foreign_web_search_remains_disabled_even_when_override_is_true():
 
     assert model.entry["supports_search_tool"] is False
     assert model.group_evidence["capabilities"]["supports_web_search"]["state"] == "guaranteed"
-    assert "foreign web search remains disabled" in model.provenance["supports_search_tool"]
+    assert model.provenance["supports_search_tool"] == (
+        "conservative: foreign tool-search/deferred discovery disabled"
+    )
 
 
 def test_supported_parameter_override_can_enable_foreign_verbosity_without_donor_leakage():

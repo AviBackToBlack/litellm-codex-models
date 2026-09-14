@@ -12,7 +12,7 @@ Aggregation is therefore field-specific, conservative, deterministic, and order-
 
 This design does not:
 
-- enable foreign-model web search;
+- automatically enable foreign hosted web search from LiteLLM capability evidence;
 - change exact Codex template ownership of Codex-native metadata;
 - infer capabilities from provider names or neighboring models;
 - rely on LiteLLM `/model_group/info` as a safety contract;
@@ -119,11 +119,16 @@ For exact templates, a known deployment list may explicitly prove absence of a t
 
 ## Web search
 
-Foreign web search stays disabled in v0.3 aggregation.
+LiteLLM `supports_web_search` remains model-group capability evidence only. It does not own Codex `supports_search_tool`, which controls tool-search/deferred-discovery behavior rather than hosted web search.
 
-LiteLLM can filter web-search deployments at request time, but missing `supports_web_search` currently behaves permissively upstream and registry metadata is incomplete. That is not sufficient evidence for Codex search-tool wire compatibility or a mandatory safe routing guarantee.
+Therefore:
 
-Exact Codex templates may retain their Codex-native search support unless any deployment explicitly reports `supports_web_search == false`, in which case the group is downgraded.
+- exact Codex templates preserve the version-matched template's `supports_search_tool` value regardless of aggregated `supports_web_search` evidence;
+- a configured or aggregated `supports_web_search=false` must not downgrade `supports_search_tool`;
+- foreign models keep the conservative `supports_search_tool=false` choice as a tool-search/deferred-discovery decision, not as a hosted-web-search suppression guarantee;
+- hosted web-search enablement remains deferred until the provider/runtime boundary and exact Codex/LiteLLM wire compatibility are proven.
+
+See `docs/foreign-web-search.md` for the dedicated compatibility contract and source-backed revalidation rules.
 
 ## Provenance and explanations
 

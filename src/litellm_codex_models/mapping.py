@@ -10,7 +10,7 @@ from .schema import ModelInfoSchema
 
 REASONING_DESCRIPTIONS = {
     "none": "No reasoning effort",
-    "minimal": "Minimal reasoning",
+    "minimal": "Minimal reasoning effort",
     "low": "Fast responses with lighter reasoning",
     "medium": "Balances speed and reasoning depth for everyday tasks",
     "high": "Greater reasoning depth for complex problems",
@@ -195,10 +195,6 @@ def _overlay_exact(entry: dict[str, Any], row: dict[str, Any], provenance: dict[
         else:
             notes.append("LiteLLM confirms parallel_tool_calls transport parameter")
 
-    if info.get("supports_web_search") is False and entry.get("supports_search_tool") is True:
-        entry["supports_search_tool"] = False
-        provenance["supports_search_tool"] = "codex:exact-template downgraded by LiteLLM supports_web_search=false"
-
     _restrict_exact_reasoning(entry, row, provenance)
 
     max_input = info.get("max_input_tokens")
@@ -278,6 +274,7 @@ def _build_foreign(
         "display_name": "derived: LiteLLM model_name",
         "description": "derived: canonical model identity",
         "model_messages": "codex:version-matched-fallback-prompt",
+        "supports_search_tool": "conservative: foreign tool-search/deferred discovery disabled",
     })
 
     max_input = info.get("max_input_tokens")
@@ -314,10 +311,12 @@ def _build_foreign(
         entry["supports_parallel_tool_calls"] = info.get("supports_function_calling") is True
         provenance["supports_parallel_tool_calls"] = "LiteLLM parallel_tool_calls + explicit supports_function_calling"
 
-    # Intentionally do not turn on Codex search/tool-mode/multi-agent behavior for
-    # a foreign model solely because LiteLLM advertises a similarly named feature.
+    # Web-search evidence is intentionally independent from Codex
+    # `supports_search_tool`, which controls tool-search/deferred discovery.
     if info.get("supports_web_search") is True:
-        notes.append("LiteLLM advertises web search; Codex supports_search_tool remains disabled for foreign model")
+        notes.append(
+            "LiteLLM advertises web search; evidence is audit-only and does not control Codex supports_search_tool"
+        )
 
     _apply_foreign_schema_guard(entry, provenance, model_info_schema, codex_catalog)
 
