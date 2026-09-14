@@ -51,6 +51,7 @@ class DeploymentEvidence:
     canonical_candidates: tuple[str, ...]
     supported_openai_params: tuple[str, ...] | None
     reasoning_efforts: tuple[str, ...] | None
+    reasoning_effort_evidence: tuple[tuple[str, str], ...]
     capability_evidence: tuple[tuple[str, str], ...]
     max_input_tokens: int | None
     max_output_tokens: int | None
@@ -68,6 +69,7 @@ class ModelGroupEvidence:
     max_output_tokens: LimitEvidence
     supported_openai_params: SetEvidence
     reasoning_efforts: SetEvidence
+    denied_reasoning_efforts: tuple[str, ...]
     disagreements: tuple[str, ...]
     foreign_synthesis_blockers: tuple[str, ...]
 
@@ -180,6 +182,30 @@ def _deployment_reasoning_efforts(row: dict[str, Any]) -> tuple[str, ...] | None
     return tuple(effort for effort in REASONING_DESCRIPTIONS if effort in confirmed)
 
 
+def _deployment_reasoning_effort_evidence(
+    row: dict[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    info = _info(row)
+    explicit_levels = info.get("reasoning_effort_levels")
+    listed = {
+        effort
+        for effort in explicit_levels
+        if isinstance(effort, str) and effort in REASONING_DESCRIPTIONS
+    } if isinstance(explicit_levels, (list, tuple)) else set()
+
+    evidence: list[tuple[str, str]] = []
+    for effort, flag in EFFORT_FLAG_MAP.items():
+        raw_flag = info.get(flag)
+        if raw_flag is False:
+            token = "false"
+        elif raw_flag is True or effort in listed:
+            token = "true"
+        else:
+            token = "unknown"
+        evidence.append((effort, token))
+    return tuple(evidence)
+
+
 def aggregate_reasoning_efforts(rows: list[dict[str, Any]]) -> SetEvidence:
     if any(_info(row).get("supports_reasoning") is False for row in rows):
         return SetEvidence(
@@ -214,6 +240,14 @@ def aggregate_reasoning_efforts(rows: list[dict[str, Any]]) -> SetEvidence:
     )
 
 
+def _denied_reasoning_efforts(rows: list[dict[str, Any]]) -> tuple[str, ...]:
+    return tuple(
+        effort
+        for effort in REASONING_DESCRIPTIONS
+        if any(_info(row).get(EFFORT_FLAG_MAP[effort]) is False for row in rows)
+    )
+
+
 def _raw_boolean_token(value: Any) -> str:
     if value is True:
         return "true"
@@ -227,19 +261,30 @@ def _raw_limit_token(value: Any) -> str:
     return str(normalized) if normalized is not None else "unknown"
 
 
-def _template_matches(
-    row: dict[str, Any], codex_index: dict[str, dict[str, Any]]
+def _identity_candidates(
+    row: dict[str, Any], *, include_group_alias: bool
 ) -> tuple[str, ...]:
-    return tuple(
-        candidate for candidate in canonical_candidates(row) if candidate in codex_index
-    )
+    if include_group_alias:
+        return tuple(canonical_candidates(row))
+    deployment_only = dict(row)
+    deployment_only["model_name"] = None
+    return tuple(canonical_candidates(deployment_only))
+
+
+def _template_matches(
+    candidates: tuple[str, ...], codex_index: dict[str, dict[str, Any]]
+) -> tuple[str, ...]:
+    return tuple(candidate for candidate in candidates if candidate in codex_index)
 
 
 def _deployment_evidence(
-    row: dict[str, Any], codex_index: dict[str, dict[str, Any]]
+    row: dict[str, Any],
+    codex_index: dict[str, dict[str, Any]],
+    *,
+    include_group_alias: bool,
 ) -> DeploymentEvidence:
-    candidates = tuple(canonical_candidates(row))
-    matches = _template_matches(row, codex_index)
+    candidates = _identity_candidates(row, include_group_alias=include_group_alias)
+    matches = _template_matches(candidates, codex_index)
     template_slug = matches[0] if len(matches) == 1 else None
     params = _params(row)
     info = _info(row)
@@ -255,6 +300,7 @@ def _deployment_evidence(
         canonical_candidates=candidates,
         supported_openai_params=_normalize_string_set(info.get("supported_openai_params")),
         reasoning_efforts=_deployment_reasoning_efforts(row),
+        reasoning_effort_evidence=_deployment_reasoning_effort_evidence(row),
         capability_evidence=tuple(
             (field, _raw_boolean_token(info.get(field))) for field in CAPABILITY_FIELDS
         ),
@@ -274,6 +320,9 @@ def _deployment_sort_key(deployment: DeploymentEvidence) -> tuple[str, ...]:
         if deployment.reasoning_efforts is None
         else "<known>:" + "\x1f".join(deployment.reasoning_efforts)
     )
+    reasoning_evidence_token = "\x1f".join(
+        f"{effort}={value}" for effort, value in deployment.reasoning_effort_evidence
+    )
     return (
         deployment.provider or "",
         deployment.model or "",
@@ -284,6 +333,7 @@ def _deployment_sort_key(deployment: DeploymentEvidence) -> tuple[str, ...]:
         "\x1f".join(deployment.canonical_candidates),
         params_token,
         reasoning_token,
+        reasoning_evidence_token,
         "\x1f".join(f"{field}={value}" for field, value in deployment.capability_evidence),
         str(deployment.max_input_tokens or 0),
         str(deployment.max_output_tokens or 0),
@@ -357,6 +407,16 @@ def _collect_disagreements(
     if len(reasoning_tokens) > 1:
         disagreements.append("reasoning_efforts: " + ", ".join(sorted(reasoning_tokens)))
 
+    for effort in REASONING_DESCRIPTIONS:
+        tokens = {
+            dict(deployment.reasoning_effort_evidence)[effort]
+            for deployment in deployments
+        }
+        if len(tokens) > 1:
+            disagreements.append(
+                f"reasoning effort {effort}: " + ", ".join(sorted(tokens))
+            )
+
     return tuple(sorted(disagreements))
 
 
@@ -377,20 +437,28 @@ def aggregate_model_group(
 
     invalid_modes = sorted(
         {
-            _string(_info(row).get("mode")) or "unknown"
+            mode if isinstance(mode, str) and mode else "unknown"
             for row in rows
-            if (_string(_info(row).get("mode")) or "unknown") not in ALLOWED_MODES
+            if (mode := _info(row).get("mode")) not in ALLOWED_MODES
         }
     )
     if invalid_modes:
         raise AppError(
             f'Model group "{model_name}" contains non-Codex-eligible mode(s): '
-            + ", ".join(invalid_modes)
+            + ", ".join(repr(mode) for mode in invalid_modes)
         )
 
+    include_group_alias = len(rows) == 1
     deployments = tuple(
         sorted(
-            (_deployment_evidence(row, codex_index) for row in rows),
+            (
+                _deployment_evidence(
+                    row,
+                    codex_index,
+                    include_group_alias=include_group_alias,
+                )
+                for row in rows
+            ),
             key=_deployment_sort_key,
         )
     )
@@ -407,6 +475,7 @@ def aggregate_model_group(
     max_output_tokens = aggregate_limit(rows, "max_output_tokens")
     supported_openai_params = aggregate_supported_openai_params(rows)
     reasoning_efforts = aggregate_reasoning_efforts(rows)
+    denied_reasoning_efforts = _denied_reasoning_efforts(rows)
 
     blockers: list[str] = []
     if kind == "foreign" and len(rows) > 1 and max_input_tokens.state != "known":
@@ -425,6 +494,7 @@ def aggregate_model_group(
         max_output_tokens=max_output_tokens,
         supported_openai_params=supported_openai_params,
         reasoning_efforts=reasoning_efforts,
+        denied_reasoning_efforts=denied_reasoning_efforts,
         disagreements=_collect_disagreements(rows, deployments),
         foreign_synthesis_blockers=tuple(blockers),
     )
