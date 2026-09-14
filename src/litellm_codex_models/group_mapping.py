@@ -166,13 +166,21 @@ def _apply_exact_group_capability_denials(
             provenance["default_reasoning_level"] = (
                 "derived: disabled by LiteLLM model-group reasoning denial"
             )
+        if entry.get("supports_reasoning_summary_parameter") is True:
+            entry["supports_reasoning_summary_parameter"] = False
+            provenance["supports_reasoning_summary_parameter"] = (
+                "codex:exact-template downgraded by LiteLLM model-group reasoning denial"
+            )
 
     parallel = group.capabilities["supports_parallel_function_calling"]
-    if parallel.state == "denied" and entry.get("supports_parallel_tool_calls") is True:
+    functions = group.capabilities["supports_function_calling"]
+    if (
+        parallel.state == "denied" or functions.state == "denied"
+    ) and entry.get("supports_parallel_tool_calls") is True:
         entry["supports_parallel_tool_calls"] = False
         provenance["supports_parallel_tool_calls"] = (
             "codex:exact-template downgraded by LiteLLM model-group "
-            "supports_parallel_function_calling=false"
+            "function-calling capability denial"
         )
 
 
@@ -253,10 +261,11 @@ def generate_prepared_model(
 
     if "supports_parallel_tool_calls" in model.entry:
         parallel = group.capabilities["supports_parallel_function_calling"]
-        if parallel.state != "guaranteed":
+        functions = group.capabilities["supports_function_calling"]
+        if parallel.state != "guaranteed" or functions.state != "guaranteed":
             model.entry["supports_parallel_tool_calls"] = False
             model.provenance["supports_parallel_tool_calls"] = (
-                "conservative: LiteLLM model-group parallel-function capability not guaranteed"
+                "conservative: LiteLLM model-group function/parallel capability not guaranteed"
             )
         else:
             model.provenance["supports_parallel_tool_calls"] = (
