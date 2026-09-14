@@ -49,11 +49,11 @@ def test_config_requires_at_least_one_exact_or_glob_selector(tmp_path):
         load_config(write_config(tmp_path, "models = []\nmodel_globs = []\n"))
 
 
-def test_model_overrides_fail_closed_until_override_slice_is_implemented(tmp_path):
-    with pytest.raises(AppError, match="model_overrides are not supported"):
-        load_config(
-            write_config(
-                tmp_path,
-                'models = ["a"]\n[model_overrides.a]\nsupports_vision = true\n',
-            )
+def test_model_overrides_are_parsed_after_override_slice_is_implemented(tmp_path):
+    config = load_config(
+        write_config(
+            tmp_path,
+            'models = ["a"]\n[model_overrides.a]\nsupports_vision = true\n',
         )
+    )
+    assert config.model_overrides["a"].supports_vision is True
