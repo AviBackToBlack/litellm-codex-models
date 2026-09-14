@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ from .codex import (
 from .config import AppConfig, load_config
 from .errors import AppError
 from .group_mapping import GroupGeneratedModel, generate_prepared_catalog, prepare_model_groups
-from .litellm import fetch_payload, load_payload_file, select_model_groups
+from .litellm import fetch_payload, load_payload_file, select_model_groups_with_provenance
 from .mapping import canonical_candidates
 from .schema import parse_model_info_schema
 
@@ -160,22 +161,20 @@ def _print_table(rows: list[list[str]], headers: list[str]) -> None:
 
 def cmd_list(args: argparse.Namespace, config: AppConfig) -> int:
     rows = _load_litellm(config, args.input)
-    configured = set(config.models)
     source_rows = rows
     if args.configured:
-        by_name: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            name = row.get("model_name")
-            if isinstance(name, str):
-                by_name.setdefault(name, []).append(row)
-        source_rows = [row for name in config.models for row in by_name.get(name, [])]
+        selected = select_model_groups_with_provenance(
+            rows,
+            config.models,
+            config.model_globs,
+            strict=config.strict,
+        )
+        source_rows = [row for group in selected for row in group.rows]
 
     table: list[list[str]] = []
     for row in source_rows:
         name = row.get("model_name")
         if not isinstance(name, str):
-            continue
-        if args.configured and name not in configured:
             continue
         info = row.get("model_info")
         params = row.get("litellm_params")
@@ -199,7 +198,12 @@ def _build(
 ) -> tuple[dict[str, Any], dict[str, GroupGeneratedModel], str]:
     bundle = _load_codex_bundle_arg(args)
     rows = _load_litellm(config, args.input)
-    selected_groups = select_model_groups(rows, config.models, strict=config.strict)
+    selected_groups = select_model_groups_with_provenance(
+        rows,
+        config.models,
+        config.model_globs,
+        strict=config.strict,
+    )
     if bundle is not None:
         catalog, source = _bundle_catalog(bundle)
     else:
@@ -260,8 +264,12 @@ def _format_value(value: Any, *, full: bool = False) -> str:
 
 
 def cmd_explain(args: argparse.Namespace, config: AppConfig) -> int:
-    if args.model not in config.models:
-        raise AppError(f'Model "{args.model}" is not present in the configured allowlist')
+    configured = args.model in config.models or any(
+        fnmatchcase(args.model, pattern) for pattern in config.model_globs
+    )
+    if not configured:
+        raise AppError(f'Model "{args.model}" is not present in the configured model selectors')
+
     _generated, explanations, source = _build(args, config)
     model = explanations.get(args.model)
     if model is None:
@@ -271,6 +279,8 @@ def cmd_explain(args: argparse.Namespace, config: AppConfig) -> int:
     print(f"kind: {model.kind}")
     print(f"canonical_model: {model.canonical_model}")
     print(f"template_slug: {model.template_slug or '-'}")
+    if model.selection_source is not None:
+        print(f"selection_source: {model.selection_source}")
     print(f"catalog_source: {source}")
     if model.group_evidence is not None:
         print("group_evidence:")
@@ -304,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_list = sub.add_parser("list", help="List LiteLLM models")
     common(p_list, needs_catalog=False)
-    p_list.add_argument("--configured", action="store_true", help="Show only configured allowlist models")
+    p_list.add_argument("--configured", action="store_true", help="Show only configured model selectors")
 
     p_build = sub.add_parser("build", help="Generate Codex models.json")
     common(p_build, needs_catalog=True)
