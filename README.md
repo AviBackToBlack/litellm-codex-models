@@ -6,11 +6,11 @@ The key design rule is **Codex template inheritance + LiteLLM capability evidenc
 
 - The config contains an ordered, exact `model_name` allowlist.
 - Only LiteLLM `mode = chat` or `mode = responses` entries are eligible.
-- If a LiteLLM deployment resolves to a model already present in the matching Codex catalog, the entire Codex entry is deep-cloned and the LiteLLM alias becomes its slug.
+- If all deployments in a LiteLLM model group independently resolve to the same model in the matching Codex catalog, the entire Codex entry is deep-cloned and the LiteLLM alias becomes its slug.
 - Codex-specific fields (instructions, shell/tool modes, truncation, multi-agent metadata, etc.) stay owned by Codex.
 - Explicit LiteLLM transport restrictions can downgrade an exact template; `null` means unknown and does not become `false`.
-- Unknown/foreign models are built from conservative Codex fallback semantics, use the version-matched Codex fallback prompt, and are enriched only with explicit LiteLLM capability evidence.
-- `explain` reports field provenance and important compatibility notes.
+- Unknown/foreign model groups are built from conservative Codex fallback semantics, use the version-matched Codex fallback prompt, and are enriched only with capability evidence guaranteed across every possible deployment.
+- `explain` reports field provenance, group evidence, and important compatibility notes.
 
 ## Install
 
@@ -133,11 +133,19 @@ Then point Codex at the result:
 model_catalog_json = "/absolute/path/to/generated-models.json"
 ```
 
+## Model-group policy
+
+Rows with the same exact raw `model_name` are treated as one LiteLLM routing group rather than as duplicates to reject.
+
+For an **exact Codex template group**, every deployment must independently resolve unambiguously to the same version-matched Codex template. The Codex entry remains authoritative, while explicit deployment denials can conservatively downgrade capabilities. Unknown evidence alone does not narrow exact-template behavior.
+
+For a **foreign group**, the generated catalog entry describes what is safe for an arbitrary routed request: boolean capabilities require a group guarantee, supported parameter and reasoning sets are intersected, and context/output limits use the safe minimum only when every deployment provides a valid value. Foreign web search remains disabled.
+
 ## Context-window policy
 
 For an **exact Codex template match**, `context_window` and `max_context_window` remain the Codex values. LiteLLM `max_input_tokens` is treated as validation evidence because the two fields do not have identical semantics.
 
-For a **foreign model** with no Codex template, the generator uses LiteLLM `max_input_tokens` as the best available approximation for both context fields and marks that provenance explicitly. This is intentionally visible in `explain` rather than hidden as an assumption.
+For a **foreign model group**, the generator uses the minimum known LiteLLM `max_input_tokens` across every deployment as the best safe approximation for both context fields. A multi-deployment foreign group with missing or invalid context evidence fails closed rather than advertising a guessed window. A single foreign deployment preserves the v0.2 fallback behavior.
 
 ## v0.2 highlights
 
@@ -152,7 +160,6 @@ For a **foreign model** with no Codex template, the generator uses LiteLLM `max_
 
 ## Current limitations
 
-- Duplicate LiteLLM `model_name` values are rejected. Multi-deployment aggregation is planned rather than guessed.
 - Foreign-model web search remains disabled even when LiteLLM advertises web search; Codex search-tool wire semantics need an explicit compatibility rule.
 - Foreign-model context-window mapping is an approximation, as described above.
 - The exact allowlist supports strings only; per-model overrides/globs are deliberately deferred.
