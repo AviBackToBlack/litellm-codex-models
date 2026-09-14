@@ -32,11 +32,11 @@ class OutputConfig:
 @dataclass(frozen=True)
 class AppConfig:
     models: tuple[str, ...]
-    model_globs: tuple[str, ...]
     strict: bool
     litellm: LiteLLMConfig
     codex: CodexConfig
     output: OutputConfig
+    model_globs: tuple[str, ...] = ()
 
 
 def _string_list(raw: object, *, field: str) -> tuple[str, ...]:
@@ -73,7 +73,6 @@ def load_config(path: str | Path) -> AppConfig:
 
     return AppConfig(
         models=models,
-        model_globs=model_globs,
         strict=bool(filter_raw.get("strict", True)),
         litellm=LiteLLMConfig(
             url=litellm_raw.get("url"),
@@ -91,4 +90,5 @@ def load_config(path: str | Path) -> AppConfig:
             path=str(output_raw.get("path", "models.json")),
             pretty=bool(output_raw.get("pretty", True)),
         ),
+        model_globs=model_globs,
     )
