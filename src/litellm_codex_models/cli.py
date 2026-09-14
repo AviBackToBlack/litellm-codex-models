@@ -21,8 +21,9 @@ from .codex import (
 )
 from .config import AppConfig, load_config
 from .errors import AppError
-from .litellm import fetch_payload, load_payload_file, select_models
-from .mapping import GeneratedModel, canonical_candidates, generate_catalog, resolve_template
+from .group_mapping import GroupGeneratedModel, generate_prepared_catalog, prepare_model_groups
+from .litellm import fetch_payload, load_payload_file, select_model_groups
+from .mapping import canonical_candidates
 from .schema import parse_model_info_schema
 
 
@@ -109,8 +110,12 @@ def cmd_list(args: argparse.Namespace, config: AppConfig) -> int:
     configured = set(config.models)
     source_rows = rows
     if args.configured:
-        by_name = {row.get("model_name"): row for row in rows if isinstance(row.get("model_name"), str)}
-        source_rows = [by_name[name] for name in config.models if name in by_name]
+        by_name: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            name = row.get("model_name")
+            if isinstance(name, str):
+                by_name.setdefault(name, []).append(row)
+        source_rows = [row for name in config.models for row in by_name.get(name, [])]
 
     table: list[list[str]] = []
     for row in source_rows:
@@ -119,9 +124,11 @@ def cmd_list(args: argparse.Namespace, config: AppConfig) -> int:
             continue
         if args.configured and name not in configured:
             continue
-        info = row.get("model_info") or {}
-        params = row.get("litellm_params") or {}
-        canonical = canonical_candidates(row)
+        info = row.get("model_info")
+        params = row.get("litellm_params")
+        info = info if isinstance(info, dict) else {}
+        params = params if isinstance(params, dict) else {}
+        canonical = canonical_candidates(row) if isinstance(row.get("model_info"), dict) and isinstance(row.get("litellm_params"), dict) else []
         table.append([
             name,
             str(info.get("mode")),
@@ -133,12 +140,16 @@ def cmd_list(args: argparse.Namespace, config: AppConfig) -> int:
     return 0
 
 
-def _build(args: argparse.Namespace, config: AppConfig) -> tuple[dict[str, Any], dict[str, GeneratedModel], str]:
+def _build(
+    args: argparse.Namespace,
+    config: AppConfig,
+) -> tuple[dict[str, Any], dict[str, GroupGeneratedModel], str]:
     rows = _load_litellm(config, args.input)
-    selected = select_models(rows, config.models, strict=config.strict)
+    selected_groups = select_model_groups(rows, config.models, strict=config.strict)
     catalog, source = _load_codex_catalog(config, args.catalog_file, args.codex_ref)
     index = catalog_index(catalog)
-    has_foreign = any(resolve_template(row, index)[0] is None for row in selected)
+    prepared = prepare_model_groups(selected_groups, index)
+    has_foreign = any(group.evidence.kind == "foreign" for group in prepared)
     fallback_prompt = None
     model_info_schema = None
     if has_foreign:
@@ -155,8 +166,8 @@ def _build(args: argparse.Namespace, config: AppConfig) -> tuple[dict[str, Any],
             args.codex_ref,
         )
         model_info_schema = parse_model_info_schema(schema_source)
-    generated, explanations = generate_catalog(
-        selected,
+    generated, explanations = generate_prepared_catalog(
+        prepared,
         catalog,
         fallback_prompt=fallback_prompt,
         model_info_schema=model_info_schema,
@@ -201,6 +212,10 @@ def cmd_explain(args: argparse.Namespace, config: AppConfig) -> int:
     print(f"canonical_model: {model.canonical_model}")
     print(f"template_slug: {model.template_slug or '-'}")
     print(f"catalog_source: {source}")
+    if model.group_evidence is not None:
+        print("group_evidence:")
+        for line in json.dumps(model.group_evidence, indent=2, ensure_ascii=False).splitlines():
+            print(f"  {line}")
     if model.notes:
         print("notes:")
         for note in model.notes:
