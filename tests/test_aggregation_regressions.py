@@ -111,3 +111,58 @@ def test_single_row_exact_identity_matches_existing_v02_mapping():
     assert group.model_name == generated.entry["slug"]
     assert group.max_input_tokens.value == source["model_info"]["max_input_tokens"]
     assert group.capabilities["supports_vision"].value is True
+
+
+def test_shared_group_alias_cannot_prove_multi_deployment_exact_identity():
+    group = aggregate_model_group(
+        [
+            row("gpt-5.6-sol", "vendor/model-a"),
+            row("gpt-5.6-sol", "vendor/model-b"),
+        ],
+        AMBIGUOUS_INDEX,
+    )
+
+    assert group.kind == "foreign"
+    assert group.template_slug is None
+    assert all(
+        "gpt-5.6-sol" not in deployment.canonical_candidates
+        for deployment in group.deployments
+    )
+
+
+def test_single_row_alias_preserves_v02_identity_compatibility():
+    source = row("gpt-5.6-sol", "vendor/not-in-codex")
+
+    group = aggregate_model_group([source], AMBIGUOUS_INDEX)
+    generated = generate_model(source, AMBIGUOUS_INDEX)
+
+    assert group.kind == "exact"
+    assert group.template_slug == "gpt-5.6-sol"
+    assert group.kind == generated.kind
+    assert group.template_slug == generated.template_slug
+
+
+def test_standalone_reasoning_effort_denial_is_preserved_for_exact_mapping():
+    group = aggregate_model_group(
+        [
+            row(
+                "alias",
+                "openai/gpt-5.6-sol",
+                supports_low_reasoning_effort=False,
+            )
+        ],
+        AMBIGUOUS_INDEX,
+    )
+
+    assert group.kind == "exact"
+    assert group.reasoning_efforts.state == "unknown"
+    assert group.denied_reasoning_efforts == ("low",)
+    assert ("low", "false") in group.deployments[0].reasoning_effort_evidence
+
+
+def test_whitespace_padded_mode_fails_same_exact_eligibility_check_as_v02():
+    with pytest.raises(AppError, match="non-Codex-eligible"):
+        aggregate_model_group(
+            [row(mode=" chat ")],
+            AMBIGUOUS_INDEX,
+        )
