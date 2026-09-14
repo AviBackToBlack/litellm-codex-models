@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from types import MappingProxyType
+from typing import Any, Literal, Mapping
 
 from .errors import AppError
-from .mapping import EFFORT_FLAG_MAP, REASONING_DESCRIPTIONS, canonical_candidates, resolve_template
+from .mapping import EFFORT_FLAG_MAP, REASONING_DESCRIPTIONS, canonical_candidates
 
 
 ALLOWED_MODES = frozenset({"chat", "responses"})
@@ -46,12 +47,13 @@ class DeploymentEvidence:
     base_model: str | None
     mode: str
     template_slug: str | None
+    template_matches: tuple[str, ...]
     canonical_candidates: tuple[str, ...]
-    capabilities: tuple[tuple[str, str], ...]
-    max_input_tokens: int | None
-    max_output_tokens: int | None
     supported_openai_params: tuple[str, ...] | None
     reasoning_efforts: tuple[str, ...] | None
+    capability_evidence: tuple[tuple[str, str], ...]
+    max_input_tokens: int | None
+    max_output_tokens: int | None
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ class ModelGroupEvidence:
     canonical_model: str
     template_slug: str | None
     deployments: tuple[DeploymentEvidence, ...]
-    capabilities: dict[str, BooleanEvidence]
+    capabilities: Mapping[str, BooleanEvidence]
     max_input_tokens: LimitEvidence
     max_output_tokens: LimitEvidence
     supported_openai_params: SetEvidence
@@ -225,16 +227,20 @@ def _raw_limit_token(value: Any) -> str:
     return str(normalized) if normalized is not None else "unknown"
 
 
-def _optional_set_token(value: tuple[str, ...] | None) -> str:
-    if value is None:
-        return "?"
-    return "=" + "\x1f".join(value)
+def _template_matches(
+    row: dict[str, Any], codex_index: dict[str, dict[str, Any]]
+) -> tuple[str, ...]:
+    return tuple(
+        candidate for candidate in canonical_candidates(row) if candidate in codex_index
+    )
 
 
 def _deployment_evidence(
     row: dict[str, Any], codex_index: dict[str, dict[str, Any]]
 ) -> DeploymentEvidence:
-    template_slug, _ = resolve_template(row, codex_index)
+    candidates = tuple(canonical_candidates(row))
+    matches = _template_matches(row, codex_index)
+    template_slug = matches[0] if len(matches) == 1 else None
     params = _params(row)
     info = _info(row)
     mode = _string(info.get("mode")) or "unknown"
@@ -245,20 +251,28 @@ def _deployment_evidence(
         base_model=base_model,
         mode=mode,
         template_slug=template_slug,
-        canonical_candidates=tuple(canonical_candidates(row)),
-        capabilities=tuple(
+        template_matches=matches,
+        canonical_candidates=candidates,
+        supported_openai_params=_normalize_string_set(info.get("supported_openai_params")),
+        reasoning_efforts=_deployment_reasoning_efforts(row),
+        capability_evidence=tuple(
             (field, _raw_boolean_token(info.get(field))) for field in CAPABILITY_FIELDS
         ),
         max_input_tokens=_positive_int(info.get("max_input_tokens")),
         max_output_tokens=_positive_int(info.get("max_output_tokens")),
-        supported_openai_params=_normalize_string_set(info.get("supported_openai_params")),
-        reasoning_efforts=_deployment_reasoning_efforts(row),
     )
 
 
 def _deployment_sort_key(deployment: DeploymentEvidence) -> tuple[str, ...]:
-    capability_token = "\x1e".join(
-        f"{field}={value}" for field, value in deployment.capabilities
+    params_token = (
+        "<unknown>"
+        if deployment.supported_openai_params is None
+        else "<known>:" + "\x1f".join(deployment.supported_openai_params)
+    )
+    reasoning_token = (
+        "<unknown>"
+        if deployment.reasoning_efforts is None
+        else "<known>:" + "\x1f".join(deployment.reasoning_efforts)
     )
     return (
         deployment.provider or "",
@@ -266,13 +280,31 @@ def _deployment_sort_key(deployment: DeploymentEvidence) -> tuple[str, ...]:
         deployment.base_model or "",
         deployment.mode,
         deployment.template_slug or "",
+        "\x1f".join(deployment.template_matches),
         "\x1f".join(deployment.canonical_candidates),
-        capability_token,
-        str(deployment.max_input_tokens) if deployment.max_input_tokens is not None else "?",
-        str(deployment.max_output_tokens) if deployment.max_output_tokens is not None else "?",
-        _optional_set_token(deployment.supported_openai_params),
-        _optional_set_token(deployment.reasoning_efforts),
+        params_token,
+        reasoning_token,
+        "\x1f".join(f"{field}={value}" for field, value in deployment.capability_evidence),
+        str(deployment.max_input_tokens or 0),
+        str(deployment.max_output_tokens or 0),
     )
+
+
+def _identity_token(deployment: DeploymentEvidence) -> str:
+    if deployment.template_matches:
+        return "[" + ",".join(deployment.template_matches) + "]"
+    return "unresolved"
+
+
+def _candidate_set_token(deployment: DeploymentEvidence) -> str:
+    normalized = tuple(sorted(set(deployment.canonical_candidates)))
+    return "[" + ",".join(normalized) + "]"
+
+
+def _exact_identity_survives(deployments: tuple[DeploymentEvidence, ...]) -> bool:
+    return bool(deployments) and all(
+        deployment.template_slug is not None for deployment in deployments
+    ) and len({deployment.template_slug for deployment in deployments}) == 1
 
 
 def _collect_disagreements(
@@ -280,11 +312,22 @@ def _collect_disagreements(
 ) -> tuple[str, ...]:
     disagreements: list[str] = []
 
-    template_tokens = {deployment.template_slug or "unresolved" for deployment in deployments}
-    if len(template_tokens) > 1:
-        disagreements.append(
-            "exact-template identity: " + ", ".join(sorted(template_tokens))
+    unique_template_slugs = {deployment.template_slug for deployment in deployments}
+    has_ambiguous_deployment = any(
+        len(deployment.template_matches) > 1 for deployment in deployments
+    )
+    if has_ambiguous_deployment or len(unique_template_slugs) > 1:
+        template_tokens = sorted({_identity_token(deployment) for deployment in deployments})
+        disagreements.append("exact-template identity: " + ", ".join(template_tokens))
+
+    if not _exact_identity_survives(deployments):
+        candidate_tokens = sorted(
+            {_candidate_set_token(deployment) for deployment in deployments}
         )
+        if len(candidate_tokens) > 1:
+            disagreements.append(
+                "canonical identity candidates: " + " | ".join(candidate_tokens)
+            )
 
     for field in CAPABILITY_FIELDS:
         tokens = {_raw_boolean_token(_info(row).get(field)) for row in rows}
@@ -323,11 +366,14 @@ def aggregate_model_group(
     if not rows:
         raise AppError("Cannot aggregate an empty LiteLLM model group")
 
-    names = {_string(row.get("model_name")) for row in rows}
-    if None in names or len(names) != 1:
+    raw_names = [row.get("model_name") for row in rows]
+    if (
+        any(not isinstance(name, str) or not name.strip() for name in raw_names)
+        or len(set(raw_names)) != 1
+    ):
         raise AppError("Model-group aggregation requires one non-empty shared model_name")
-    model_name = next(iter(names))
-    assert model_name is not None
+    model_name = raw_names[0]
+    assert isinstance(model_name, str)
 
     invalid_modes = sorted(
         {
@@ -348,18 +394,15 @@ def aggregate_model_group(
             key=_deployment_sort_key,
         )
     )
-    template_slugs = {deployment.template_slug for deployment in deployments}
     template_slug = (
-        next(iter(template_slugs))
-        if len(template_slugs) == 1 and None not in template_slugs
-        else None
+        deployments[0].template_slug if _exact_identity_survives(deployments) else None
     )
     kind: Literal["exact", "foreign"] = "exact" if template_slug else "foreign"
     canonical_model = template_slug if template_slug is not None else model_name
 
-    capabilities = {
-        field: aggregate_boolean(rows, field) for field in CAPABILITY_FIELDS
-    }
+    capabilities = MappingProxyType(
+        {field: aggregate_boolean(rows, field) for field in CAPABILITY_FIELDS}
+    )
     max_input_tokens = aggregate_limit(rows, "max_input_tokens")
     max_output_tokens = aggregate_limit(rows, "max_output_tokens")
     supported_openai_params = aggregate_supported_openai_params(rows)
