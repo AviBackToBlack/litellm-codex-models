@@ -56,15 +56,15 @@ def load_config(path: str | Path) -> AppConfig:
     except tomllib.TOMLDecodeError as exc:
         raise AppError(f"Invalid TOML in {path}: {exc}") from exc
 
-    models_raw = raw.get("models")
-    if models_raw is None:
-        raise AppError('Config must contain a top-level models = ["..."] array')
-    models = _string_list(models_raw, field="Config models allowlist")
-
-    model_globs_raw = raw.get("model_globs", [])
-    model_globs = _string_list(model_globs_raw, field="Config model_globs")
+    models = _string_list(raw.get("models", []), field="Config models allowlist")
+    model_globs = _string_list(raw.get("model_globs", []), field="Config model_globs")
     if not models and not model_globs:
         raise AppError("Config must select at least one model through models or model_globs")
+    if "model_overrides" in raw:
+        raise AppError(
+            "Config model_overrides are not supported by this implementation yet; "
+            "refusing to ignore configured compatibility overrides"
+        )
 
     filter_raw = raw.get("filter") or {}
     litellm_raw = raw.get("litellm") or {}
