@@ -92,7 +92,7 @@ def _validate_deployment_metadata(row: dict[str, Any]) -> None:
     invalid_fields = [
         field
         for field in ("model_info", "litellm_params")
-        if (value := row.get(field)) is not None and not isinstance(value, dict)
+        if not isinstance(row.get(field), dict)
     ]
     if invalid_fields:
         raise AppError(
