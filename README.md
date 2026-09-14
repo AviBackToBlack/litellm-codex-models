@@ -4,13 +4,14 @@ Generate a small, version-aware Codex `models.json` from LiteLLM's rich `/v1/mod
 
 The key design rule is **Codex template inheritance + LiteLLM capability evidence**:
 
-- The config contains an ordered, exact `model_name` allowlist.
+- The config selects exact `model_name` values and/or deterministic case-sensitive globs.
 - Only LiteLLM `mode = chat` or `mode = responses` entries are eligible.
 - If all deployments in a LiteLLM model group independently resolve to the same model in the matching Codex catalog, the entire Codex entry is deep-cloned and the LiteLLM alias becomes its slug.
 - Codex-specific fields (instructions, shell/tool modes, truncation, multi-agent metadata, etc.) stay owned by Codex.
 - Explicit LiteLLM transport restrictions can downgrade an exact template; `null` means unknown and does not become `false`.
 - Unknown/foreign model groups are built from conservative Codex fallback semantics, use the version-matched Codex fallback prompt, and are enriched only with capability evidence guaranteed across every possible deployment.
-- `explain` reports field provenance, group evidence, and important compatibility notes.
+- Optional exact-keyed `model_overrides` can replace aggregate compatibility evidence when gateway metadata is incomplete or known-wrong; the original and effective evidence remain visible in `explain`.
+- `explain` reports selection provenance, field provenance, group evidence, configured overrides, and important compatibility notes.
 
 ## Install
 
@@ -59,13 +60,27 @@ The repository CI smoke-tests installation of the exact PR/push revision through
 
 ## Configure
 
-Copy `config.example.toml` to `litellm-codex-models.toml` and edit the exact allowlist:
+Copy `config.example.toml` to `litellm-codex-models.toml` and configure exact selectors and/or globs:
 
 ```toml
+# Exact selectors keep declaration order.
 models = [
   "gpt-5.6-sol",
   "claude-sonnet-5",
 ]
+
+# Optional case-sensitive shell-style selectors. Globs are evaluated after
+# exact selectors, in declaration order; matches inside each glob are lexical.
+model_globs = [
+  "gpt-oss-*",
+]
+
+# Optional trusted compatibility assertion for one exact user-facing model_name.
+[model_overrides."claude-sonnet-5"]
+supports_vision = true
+max_input_tokens = 200000
+supported_openai_params = ["reasoning_effort", "tools"]
+reasoning_effort_levels = ["low", "medium", "high"]
 
 [filter]
 strict = true
@@ -83,6 +98,12 @@ path = "models.json"
 pretty = true
 ```
 
+Existing `models = ["..."]` entries are always exact strings; wildcard characters in that list are never reinterpreted as patterns. `model_globs` uses case-sensitive `fnmatch`-style matching over the raw LiteLLM `model_name`. Exact selectors are considered first, then globs in declaration order, with lexical ordering inside each glob and stable first-selection de-duplication. With `strict = true`, a missing exact selector or an empty glob is an error.
+
+`model_overrides` is keyed by an exact user-facing `model_name`; override keys are never globs. The target must be covered by either `models` or `model_globs`. Overrides operate on aggregated compatibility evidence, not on individual deployments and not on arbitrary Codex catalog fields. Supported fields are the six capability booleans (`supports_vision`, `supports_audio_input`, `supports_function_calling`, `supports_parallel_function_calling`, `supports_web_search`, `supports_reasoning`), `max_input_tokens`, `max_output_tokens`, `supported_openai_params`, and `reasoning_effort_levels`.
+
+An override is an explicit trusted assertion and can replace aggregate `guaranteed`, `denied`, or `unknown` evidence. `explain` keeps the original aggregate state/value beside the configured value and effective state/value. Dependency closure still applies: disabling reasoning disables reasoning transport/efforts, and disabling function calling prevents parallel tool calls. Overrides cannot force exact-template identity or enable foreign-model Codex web search.
+
 `version = "auto"` runs `codex --version` and fetches the catalog from the corresponding `rust-v<version>` tag in `openai/codex`. This avoids using a `main` catalog whose schema may not match the installed Codex binary.
 
 ## Commands
@@ -93,7 +114,7 @@ List every model in LiteLLM:
 litellm-codex-models --config litellm-codex-models.toml list
 ```
 
-Only the configured allowlist:
+Only models selected by the configured exact/glob selectors:
 
 ```bash
 litellm-codex-models --config litellm-codex-models.toml list --configured
@@ -152,15 +173,15 @@ model_catalog_json = "/absolute/path/to/generated-models.json"
 
 Rows with the same exact raw `model_name` are treated as one LiteLLM routing group rather than as duplicates to reject.
 
-For an **exact Codex template group**, every deployment must independently resolve unambiguously to the same version-matched Codex template. The Codex entry remains authoritative, while explicit deployment denials can conservatively downgrade capabilities. Unknown evidence alone does not narrow exact-template behavior.
+For an **exact Codex template group**, every deployment must independently resolve unambiguously to the same version-matched Codex template. The Codex entry remains authoritative, while explicit deployment denials can conservatively downgrade capabilities. Unknown evidence alone does not narrow exact-template behavior. A configured override may replace the aggregate compatibility evidence used for those downgrade decisions, but cannot change the proven exact identity or invent Codex-owned fields.
 
-For a **foreign group**, the generated catalog entry describes what is safe for an arbitrary routed request: boolean capabilities require a group guarantee, supported parameter and reasoning sets are intersected, and context/output limits use the safe minimum only when every deployment provides a valid value. Foreign web search remains disabled.
+For a **foreign group**, the generated catalog entry describes what is safe for an arbitrary routed request: boolean capabilities require a group guarantee, supported parameter and reasoning sets are intersected, and context/output limits use the safe minimum only when every deployment provides a valid value. Explicit overrides may replace those aggregate evidence values. Foreign web search remains disabled even when the effective web-search evidence is true.
 
 ## Context-window policy
 
-For an **exact Codex template match**, `context_window` and `max_context_window` remain the Codex values. LiteLLM `max_input_tokens` is treated as validation evidence because the two fields do not have identical semantics.
+For an **exact Codex template match**, `context_window` and `max_context_window` remain the Codex values. LiteLLM `max_input_tokens` is treated as validation evidence because the two fields do not have identical semantics. A `max_input_tokens` override likewise changes validation evidence only; it does not replace exact-template Codex context fields.
 
-For a **foreign model group**, the generator uses the minimum known LiteLLM `max_input_tokens` across every deployment as the best safe approximation for both context fields. A multi-deployment foreign group with missing or invalid context evidence fails closed rather than advertising a guessed window. A single foreign deployment preserves the v0.2 fallback behavior.
+For a **foreign model group**, the generator uses the minimum known LiteLLM `max_input_tokens` across every deployment as the best safe approximation for both context fields. A multi-deployment foreign group with missing or invalid context evidence fails closed rather than advertising a guessed window. An explicit `max_input_tokens` override can supply the trusted effective evidence needed to synthesize that group. A single foreign deployment preserves the v0.2 fallback behavior.
 
 ## v0.2 highlights
 
@@ -175,9 +196,9 @@ For a **foreign model group**, the generator uses the minimum known LiteLLM `max
 
 ## Current limitations
 
-- Foreign-model web search remains disabled even when LiteLLM advertises web search; Codex search-tool wire semantics need an explicit compatibility rule.
+- Foreign-model web search remains disabled even when LiteLLM or a configured override advertises web search; Codex search-tool wire semantics need an explicit compatibility rule.
 - Foreign-model context-window mapping is an approximation, as described above.
-- The exact allowlist supports strings only; per-model overrides/globs are deliberately deferred.
+- `model_overrides` are trusted user assertions; they can deliberately replace conservative aggregate evidence, so incorrect overrides can over-advertise gateway compatibility even though Codex-owned template identity/fields remain protected.
 - Hand-authored offline bundle manifests provide digest integrity and one declared Codex identity, but are not signed provenance attestations that the files came from the named Git ref.
 - The legacy independent `--catalog-file` / `--codex-prompt-file` / `--codex-schema-file` path remains a caller trust boundary; prefer `--codex-bundle` for verified offline resources.
 
