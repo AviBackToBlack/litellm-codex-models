@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,13 @@ from urllib.request import Request, urlopen
 from . import __version__
 from .config import LiteLLMConfig
 from .errors import AppError
+
+
+@dataclass(frozen=True)
+class SelectedModelGroup:
+    model_name: str
+    rows: tuple[dict[str, Any], ...]
+    selection_source: str
 
 
 def _validate_payload(payload: Any) -> list[dict[str, Any]]:
@@ -70,14 +79,16 @@ def index_model_groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, A
     return result
 
 
-def select_model_groups(
+def select_model_groups_with_provenance(
     rows: list[dict[str, Any]],
     allowlist: tuple[str, ...],
+    model_globs: tuple[str, ...],
     *,
     strict: bool,
-) -> list[list[dict[str, Any]]]:
+) -> list[SelectedModelGroup]:
     index = index_model_groups(rows)
-    selected: list[list[dict[str, Any]]] = []
+    selected: list[SelectedModelGroup] = []
+    selected_names: set[str] = set()
     missing: list[str] = []
 
     for name in allowlist:
@@ -85,8 +96,48 @@ def select_model_groups(
         if group is None:
             missing.append(name)
             continue
-        selected.append(group)
+        if name not in selected_names:
+            selected.append(
+                SelectedModelGroup(
+                    model_name=name,
+                    rows=tuple(group),
+                    selection_source=f"exact:{name}",
+                )
+            )
+            selected_names.add(name)
 
     if missing and strict:
         raise AppError("Requested models not found in LiteLLM: " + ", ".join(missing))
+
+    empty_globs: list[str] = []
+    for pattern in model_globs:
+        matches = sorted(name for name in index if fnmatchcase(name, pattern))
+        if not matches:
+            empty_globs.append(pattern)
+            continue
+        for name in matches:
+            if name in selected_names:
+                continue
+            selected.append(
+                SelectedModelGroup(
+                    model_name=name,
+                    rows=tuple(index[name]),
+                    selection_source=f"glob:{pattern}",
+                )
+            )
+            selected_names.add(name)
+
+    if empty_globs and strict:
+        raise AppError("Model globs matched no LiteLLM model_name values: " + ", ".join(empty_globs))
+
     return selected
+
+
+def select_model_groups(
+    rows: list[dict[str, Any]],
+    allowlist: tuple[str, ...],
+    *,
+    strict: bool,
+) -> list[list[dict[str, Any]]]:
+    selected = select_model_groups_with_provenance(rows, allowlist, (), strict=strict)
+    return [list(group.rows) for group in selected]
