@@ -1,1 +1,0 @@
-This file should not remain; it exists only to verify branch writes before PR creation.
