@@ -172,12 +172,23 @@ def test_whitespace_padded_mode_fails_same_exact_eligibility_check_as_v02():
     ("field", "malformed_value"),
     [
         ("litellm_params", []),
+        ("litellm_params", None),
         ("model_info", "chat"),
+        ("model_info", None),
     ],
 )
 def test_malformed_nested_deployment_metadata_fails_closed(field, malformed_value):
     source = row()
     source[field] = malformed_value
+
+    with pytest.raises(AppError, match="object-valued model_info and litellm_params"):
+        aggregate_model_group([source], AMBIGUOUS_INDEX)
+
+
+@pytest.mark.parametrize("field", ["litellm_params", "model_info"])
+def test_missing_nested_deployment_metadata_fails_closed(field):
+    source = row()
+    source.pop(field)
 
     with pytest.raises(AppError, match="object-valued model_info and litellm_params"):
         aggregate_model_group([source], AMBIGUOUS_INDEX)
