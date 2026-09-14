@@ -114,7 +114,20 @@ litellm-codex-models --config litellm-codex-models.toml explain gpt-5.6-sol
 Large values such as full instruction templates are summarized by default. Use
 `explain --full MODEL` when the complete value is needed.
 
-For offline/reproducible work, use saved inputs:
+For verified offline/reproducible work, use a Codex bundle manifest that pins one `repository@ref` identity and SHA-256 digest for every bundled resource:
+
+```bash
+litellm-codex-models \
+  --config litellm-codex-models.toml \
+  build \
+  --input litellm.json \
+  --codex-bundle codex-bundle.json \
+  --output generated-models.json
+```
+
+Exact-only generation needs only the bundle's verified catalog. If any configured model is foreign, the same bundle must also contain the verified fallback prompt and `ModelInfo` schema. `--codex-bundle` cannot be combined with `--catalog-file`, `--codex-prompt-file`, `--codex-schema-file`, or `--codex-ref`. See [docs/offline-bundle.md](docs/offline-bundle.md) for the manifest contract and threat model.
+
+The older independent local-file path remains available for compatibility:
 
 ```bash
 litellm-codex-models \
@@ -126,6 +139,8 @@ litellm-codex-models \
   --codex-schema-file openai_models.rs \
   --output generated-models.json
 ```
+
+Those independent local-file flags remain a caller trust boundary; use `--codex-bundle` when version identity and digest verification matter.
 
 Then point Codex at the result:
 
@@ -163,7 +178,8 @@ For a **foreign model group**, the generator uses the minimum known LiteLLM `max
 - Foreign-model web search remains disabled even when LiteLLM advertises web search; Codex search-tool wire semantics need an explicit compatibility rule.
 - Foreign-model context-window mapping is an approximation, as described above.
 - The exact allowlist supports strings only; per-model overrides/globs are deliberately deferred.
-- Explicit local `--catalog-file` / `--codex-prompt-file` / `--codex-schema-file` overrides are a caller trust boundary. The normal auto/ref path fetches all resources from one version-matched Codex ref.
+- Hand-authored offline bundle manifests provide digest integrity and one declared Codex identity, but are not signed provenance attestations that the files came from the named Git ref.
+- The legacy independent `--catalog-file` / `--codex-prompt-file` / `--codex-schema-file` path remains a caller trust boundary; prefer `--codex-bundle` for verified offline resources.
 
 ## Security
 

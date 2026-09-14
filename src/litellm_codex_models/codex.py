@@ -58,15 +58,21 @@ def _validate_catalog(payload: Any, source: str) -> dict[str, Any]:
     return payload
 
 
+def load_catalog_text(text: str, source: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise AppError(f"Invalid Codex catalog JSON in {source}: {exc}") from exc
+    return _validate_catalog(payload, source)
+
+
 def load_catalog_file(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise AppError(f"Codex catalog file not found: {path}") from exc
-    except json.JSONDecodeError as exc:
-        raise AppError(f"Invalid Codex catalog JSON in {path}: {exc}") from exc
-    return _validate_catalog(payload, str(path))
+    return load_catalog_text(text, str(path))
 
 
 def fetch_catalog(config: CodexConfig, ref: str) -> dict[str, Any]:

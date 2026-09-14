@@ -4,7 +4,7 @@
 
 Offline Codex resources must carry one explicit source identity and must not rely on the caller remembering which `models.json`, fallback prompt, and Rust `ModelInfo` schema belong together.
 
-Bundle v1 is the verification core for the v0.3 offline-resource path. Production CLI wiring is intentionally a later slice.
+Bundle v1 is the verified offline-resource path used by `build` and `explain` in v0.3 development.
 
 ## Manifest
 
@@ -42,7 +42,7 @@ A bundle is a JSON manifest stored next to the resources it describes:
 
 Resources cannot declare their own ref/version identity. Unknown resource fields and unknown resource roles fail closed. This prevents the file-level API from representing a catalog as one Codex ref and a prompt/schema as another.
 
-The integration slice must use the manifest identity as the offline Codex source. It must not combine a bundle with independently supplied catalog/prompt/schema files or silently substitute resources from another ref.
+Bundle mode uses the manifest identity as the offline Codex source. It cannot be combined with `--catalog-file`, `--codex-prompt-file`, `--codex-schema-file`, or `--codex-ref`; mixing verified bundle resources with independent Codex overrides fails closed before LiteLLM input is loaded or fetched.
 
 ## Integrity contract
 
@@ -50,7 +50,7 @@ Every declared resource has a SHA-256 digest over its raw bytes. The loader veri
 
 Resource paths are manifest-relative POSIX paths. Absolute paths, parent traversal, empty or dot path components, backslashes, duplicate resource paths, and paths that resolve outside the bundle directory fail closed.
 
-The loader retains the verified bytes in memory. Later consumers should use those verified bytes rather than re-reading the path and reopening a time-of-check/time-of-use gap.
+The loader retains the verified bytes in memory. `build` and `explain` consume those verified bytes directly rather than re-reading the resource paths and reopening a time-of-check/time-of-use gap.
 
 ## Schema drift
 
@@ -69,14 +69,31 @@ The bundle contract is intended to prevent accidental resource mixing and to det
 
 A hand-authored manifest is not a signed attestation that its bytes actually came from the named Git repository/ref. A later bundle-creation workflow should fetch all selected resources from one resolved Codex ref and then emit this manifest. Authenticating arbitrary hand-authored offline provenance would require a stronger signed or Git-object proof and is outside bundle v1.
 
-## Planned CLI integration
+## CLI integration
 
-The next slice should add a single offline bundle option and make it the verified replacement for the current independent local-file trust boundary.
+Use the same verified bundle with either generation command:
 
-Expected behavior:
+```bash
+litellm-codex-models \
+  --config litellm-codex-models.toml \
+  build \
+  --input litellm.json \
+  --codex-bundle ./codex-bundle.json \
+  --output generated-models.json
+
+litellm-codex-models \
+  --config litellm-codex-models.toml \
+  explain \
+  --input litellm.json \
+  --codex-bundle ./codex-bundle.json \
+  gpt-5.6-sol
+```
+
+Behavior:
 
 - exact-only generation requires only the verified `catalog` resource
 - foreign generation additionally requires verified `prompt` and `schema` resources from the same manifest
-- bundle identity is surfaced in build/explain output
-- combining bundle mode with independent local Codex resource overrides fails closed
+- build/explain output surfaces the bundle identity as `repository@ref`
+- bundle mode cannot be combined with independent local Codex resource overrides or `--codex-ref`
 - normal online auto/ref behavior remains unchanged
+- the older independent `--catalog-file` / `--codex-prompt-file` / `--codex-schema-file` path remains available for compatibility, but it is still a caller-trust boundary and is not equivalent to a verified bundle

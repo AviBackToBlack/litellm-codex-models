@@ -9,12 +9,14 @@ import tempfile
 from typing import Any
 
 from . import __version__
+from .bundle import CodexBundle, load_codex_bundle
 from .codex import (
     catalog_index,
     fetch_catalog,
     fetch_model_prompt,
     fetch_model_schema_source,
     load_catalog_file,
+    load_catalog_text,
     load_prompt_file,
     load_schema_file,
     resolve_ref,
@@ -27,8 +29,59 @@ from .mapping import canonical_candidates
 from .schema import parse_model_info_schema
 
 
+_CODEX_BUNDLE_CONFLICTS = (
+    ("catalog_file", "--catalog-file"),
+    ("codex_prompt_file", "--codex-prompt-file"),
+    ("codex_schema_file", "--codex-schema-file"),
+    ("codex_ref", "--codex-ref"),
+)
+
+
 def _load_litellm(config: AppConfig, input_path: str | None) -> list[dict[str, Any]]:
     return load_payload_file(input_path) if input_path else fetch_payload(config.litellm)
+
+
+def _load_codex_bundle_arg(args: argparse.Namespace) -> CodexBundle | None:
+    bundle_path = getattr(args, "codex_bundle", None)
+    if not bundle_path:
+        return None
+
+    conflicts = [
+        flag
+        for attr, flag in _CODEX_BUNDLE_CONFLICTS
+        if getattr(args, attr, None)
+    ]
+    if conflicts:
+        raise AppError(
+            "--codex-bundle cannot be combined with independent Codex overrides: "
+            + ", ".join(conflicts)
+        )
+    return load_codex_bundle(bundle_path)
+
+
+def _bundle_catalog(bundle: CodexBundle) -> tuple[dict[str, Any], str]:
+    resource = bundle.resource("catalog")
+    assert resource is not None
+    source = f"bundle:{bundle.identity} ({bundle.manifest_path})"
+    return load_catalog_text(resource.text(), source), source
+
+
+def _bundle_foreign_resources(bundle: CodexBundle) -> tuple[str, str]:
+    missing = [
+        role
+        for role in ("prompt", "schema")
+        if bundle.resource(role, required=False) is None
+    ]
+    if missing:
+        raise AppError(
+            f"Foreign models require verified Codex bundle prompt and schema resources from {bundle.identity}; "
+            "missing: " + ", ".join(missing)
+        )
+
+    prompt = bundle.resource("prompt")
+    schema = bundle.resource("schema")
+    assert prompt is not None and schema is not None
+    return prompt.text(), schema.text()
 
 
 def _load_codex_catalog(
@@ -144,27 +197,34 @@ def _build(
     args: argparse.Namespace,
     config: AppConfig,
 ) -> tuple[dict[str, Any], dict[str, GroupGeneratedModel], str]:
+    bundle = _load_codex_bundle_arg(args)
     rows = _load_litellm(config, args.input)
     selected_groups = select_model_groups(rows, config.models, strict=config.strict)
-    catalog, source = _load_codex_catalog(config, args.catalog_file, args.codex_ref)
+    if bundle is not None:
+        catalog, source = _bundle_catalog(bundle)
+    else:
+        catalog, source = _load_codex_catalog(config, args.catalog_file, args.codex_ref)
     index = catalog_index(catalog)
     prepared = prepare_model_groups(selected_groups, index)
     has_foreign = any(group.evidence.kind == "foreign" for group in prepared)
     fallback_prompt = None
     model_info_schema = None
     if has_foreign:
-        fallback_prompt = _load_foreign_prompt(
-            config,
-            args.catalog_file,
-            args.codex_prompt_file,
-            args.codex_ref,
-        )
-        schema_source = _load_foreign_schema(
-            config,
-            args.catalog_file,
-            args.codex_schema_file,
-            args.codex_ref,
-        )
+        if bundle is not None:
+            fallback_prompt, schema_source = _bundle_foreign_resources(bundle)
+        else:
+            fallback_prompt = _load_foreign_prompt(
+                config,
+                args.catalog_file,
+                args.codex_prompt_file,
+                args.codex_ref,
+            )
+            schema_source = _load_foreign_schema(
+                config,
+                args.catalog_file,
+                args.codex_schema_file,
+                args.codex_ref,
+            )
         model_info_schema = parse_model_info_schema(schema_source)
     generated, explanations = generate_prepared_catalog(
         prepared,
@@ -236,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     def common(p: argparse.ArgumentParser, *, needs_catalog: bool) -> None:
         p.add_argument("--input", help="Read a saved LiteLLM /v1/model/info JSON instead of calling LiteLLM")
         if needs_catalog:
+            p.add_argument("--codex-bundle", help="Use a verified offline Codex bundle manifest")
             p.add_argument("--catalog-file", help="Use a local Codex models.json instead of fetching one")
             p.add_argument("--codex-prompt-file", help="Use a local version-matched Codex models-manager/prompt.md for foreign models")
             p.add_argument("--codex-schema-file", help="Use a local version-matched Codex protocol/src/openai_models.rs for foreign models")
