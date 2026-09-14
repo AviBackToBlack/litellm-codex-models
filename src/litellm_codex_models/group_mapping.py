@@ -362,15 +362,6 @@ def _repair_exact_override_provenance(
         source = f"config:model_overrides.{model_name}.supports_audio_input"
         provenance["input_modalities"] = _exact_retained_source(prepared, source)
 
-    if override.supports_web_search is not None and "supports_search_tool" in entry:
-        source = f"config:model_overrides.{model_name}.supports_web_search"
-        if override.supports_web_search is True and entry.get("supports_search_tool") is True:
-            provenance["supports_search_tool"] = _exact_retained_source(prepared, source)
-        elif provenance.get("supports_search_tool") == (
-            "codex:exact-template downgraded by LiteLLM supports_web_search=false"
-        ):
-            provenance["supports_search_tool"] = source
-
     if override.supported_openai_params is not None:
         source = f"config:model_overrides.{model_name}.supported_openai_params"
         params = set(override.supported_openai_params)
@@ -463,12 +454,6 @@ def _repair_foreign_override_provenance(
         model.provenance["supports_parallel_tool_calls"] = (
             "effective model-group dependency closure after "
             + ", ".join(parallel_sources)
-        )
-
-    if override.supports_web_search is not None and "supports_search_tool" in model.entry:
-        model.provenance["supports_search_tool"] = (
-            f"conservative: foreign web search remains disabled despite "
-            f"config:model_overrides.{model_name}.supports_web_search"
         )
 
 
