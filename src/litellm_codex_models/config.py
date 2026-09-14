@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
@@ -178,6 +179,24 @@ def _parse_model_overrides(raw: object) -> Mapping[str, ModelOverride]:
     return MappingProxyType(parsed)
 
 
+def _validate_override_targets(
+    model_overrides: Mapping[str, ModelOverride],
+    models: tuple[str, ...],
+    model_globs: tuple[str, ...],
+) -> None:
+    unselected = sorted(
+        model_name
+        for model_name in model_overrides
+        if model_name not in models
+        and not any(fnmatchcase(model_name, pattern) for pattern in model_globs)
+    )
+    if unselected:
+        raise AppError(
+            "Config model_overrides target model(s) not selected by models/model_globs: "
+            + ", ".join(unselected)
+        )
+
+
 def load_config(path: str | Path) -> AppConfig:
     path = Path(path)
     try:
@@ -192,6 +211,7 @@ def load_config(path: str | Path) -> AppConfig:
     if not models and not model_globs:
         raise AppError("Config must select at least one model through models or model_globs")
     model_overrides = _parse_model_overrides(raw.get("model_overrides"))
+    _validate_override_targets(model_overrides, models, model_globs)
 
     filter_raw = raw.get("filter") or {}
     litellm_raw = raw.get("litellm") or {}
