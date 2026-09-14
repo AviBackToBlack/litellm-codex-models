@@ -14,6 +14,7 @@ from .errors import AppError
 BUNDLE_SCHEMA_VERSION = 1
 RESOURCE_ROLES = ("catalog", "prompt", "schema")
 _SHA256_RE = re.compile(r"^[0-9A-Fa-f]{64}$")
+_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:$")
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,8 @@ def _resource_relative_parts(raw_path: Any, role: str) -> tuple[str, ...]:
         raise AppError(f'Codex bundle resource "{role}" path must use forward slashes')
 
     parts = tuple(raw_path.split("/"))
-    if raw_path.startswith("/") or any(part in {"", ".", ".."} for part in parts):
+    drive_qualified = bool(parts and _DRIVE_PREFIX_RE.fullmatch(parts[0]))
+    if raw_path.startswith("/") or drive_qualified or any(part in {"", ".", ".."} for part in parts):
         raise AppError(f'Codex bundle resource "{role}" path must stay inside the bundle directory')
     return parts
 
