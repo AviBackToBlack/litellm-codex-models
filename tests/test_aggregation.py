@@ -203,7 +203,6 @@ def test_reasoning_efforts_are_intersected_in_codex_order():
             row(
                 model="vendor/b",
                 supports_reasoning=True,
-                supports_medium_reasoning_effort=True,
                 reasoning_effort_levels=["medium", "high"],
             ),
         ],
@@ -218,12 +217,12 @@ def test_explicit_effort_denial_wins_over_positive_list_entry():
         [
             row(
                 model="vendor/a",
-                reasoning_effort_levels=["medium", "high"],
+                reasoning_effort_levels=["low", "medium"],
             ),
             row(
                 model="vendor/b",
-                reasoning_effort_levels=["medium", "high"],
-                supports_high_reasoning_effort=False,
+                reasoning_effort_levels=["low", "medium"],
+                supports_low_reasoning_effort=False,
             ),
         ],
         INDEX,
@@ -291,3 +290,22 @@ def test_group_aggregation_is_fully_order_independent():
     reverse = aggregate_model_group(list(reversed(rows)), INDEX)
     assert forward == reverse
     assert forward.disagreements == tuple(sorted(forward.disagreements))
+
+
+def test_order_independence_preserves_unknown_vs_known_empty_deployment_evidence():
+    rows = [
+        row(
+            model="vendor/same",
+            provider="provider",
+            supported_openai_params=None,
+        ),
+        row(
+            model="vendor/same",
+            provider="provider",
+            supported_openai_params=[],
+            reasoning_effort_levels=[],
+        ),
+    ]
+    assert aggregate_model_group(rows, INDEX) == aggregate_model_group(
+        list(reversed(rows)), INDEX
+    )
