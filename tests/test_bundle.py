@@ -122,14 +122,28 @@ def test_resource_parent_traversal_is_rejected(tmp_path):
 
 
 def test_absolute_resource_path_is_rejected(tmp_path):
-    catalog_path = tmp_path / "models.json"
     content = b'{"models": []}\n'
-    catalog_path.write_bytes(content)
     manifest = _write_manifest(
         tmp_path,
         {
             "catalog": {
                 "path": "/models.json",
+                "sha256": _digest(content),
+            }
+        },
+    )
+
+    with pytest.raises(AppError, match="must stay inside the bundle directory"):
+        load_codex_bundle(manifest)
+
+
+def test_drive_qualified_resource_path_is_rejected_portably(tmp_path):
+    content = b'{"models": []}\n'
+    manifest = _write_manifest(
+        tmp_path,
+        {
+            "catalog": {
+                "path": "C:/models.json",
                 "sha256": _digest(content),
             }
         },
