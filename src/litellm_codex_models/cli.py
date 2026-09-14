@@ -209,10 +209,20 @@ def _build(
     else:
         catalog, source = _load_codex_catalog(config, args.catalog_file, args.codex_ref)
     index = catalog_index(catalog)
+    selected_names = {
+        str(group.rows[0].get("model_name"))
+        for group in selected_groups
+        if group.rows
+    }
+    active_overrides = {
+        name: override
+        for name, override in config.model_overrides.items()
+        if name in selected_names
+    }
     prepared = prepare_model_groups(
         selected_groups,
         index,
-        config.model_overrides,
+        active_overrides,
     )
     has_foreign = any(group.evidence.kind == "foreign" for group in prepared)
     fallback_prompt = None
