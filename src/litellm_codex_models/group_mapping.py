@@ -228,6 +228,12 @@ def _source_or_default(
     return "config override/dependency closure: " + ", ".join(sources)
 
 
+def _exact_retained_source(prepared: PreparedModelGroup, source: str) -> str:
+    template = prepared.evidence.template_slug
+    assert template is not None
+    return f"codex:exact-template:{template}; compatibility retained by {source}"
+
+
 def _apply_exact_group_capability_denials(
     entry: dict[str, Any],
     prepared: PreparedModelGroup,
@@ -295,7 +301,23 @@ def _apply_exact_reasoning_override(
     if not isinstance(levels, list):
         return
 
-    allowed = set(override.reasoning_effort_levels)
+    evidence = prepared.evidence.reasoning_efforts
+    source = f"config:model_overrides.{prepared.evidence.model_name}.reasoning_effort_levels"
+    if evidence.state == "denied":
+        entry["supported_reasoning_levels"] = []
+        if "default_reasoning_level" in entry:
+            entry["default_reasoning_level"] = None
+            provenance["default_reasoning_level"] = (
+                "effective model-group reasoning denial after " + source
+            )
+        provenance["supported_reasoning_levels"] = (
+            "effective model-group reasoning denial after " + source
+        )
+        return
+    if evidence.state != "known":
+        return
+
+    allowed = set(evidence.values)
     filtered = [
         item
         for item in levels
@@ -303,7 +325,6 @@ def _apply_exact_reasoning_override(
     ]
     if filtered != levels:
         entry["supported_reasoning_levels"] = filtered
-    source = f"config:model_overrides.{prepared.evidence.model_name}.reasoning_effort_levels"
     provenance["supported_reasoning_levels"] = (
         "codex:exact-template intersected with " + source
     )
@@ -331,31 +352,53 @@ def _repair_exact_override_provenance(
 
     if override.supports_vision is not None:
         source = f"config:model_overrides.{model_name}.supports_vision"
-        if "input_modalities" in entry:
-            provenance["input_modalities"] = source
         notes[:] = [note for note in notes if note != "LiteLLM confirms vision support"]
         if override.supports_vision:
+            if "image" in entry.get("input_modalities", []):
+                provenance["input_modalities"] = _exact_retained_source(prepared, source)
             notes.append("Configured override confirms vision support")
 
-    if override.supports_audio_input is not None and "input_modalities" in entry:
-        provenance["input_modalities"] = (
-            f"config:model_overrides.{model_name}.supports_audio_input"
-        )
+    if override.supports_audio_input is True and "audio" in entry.get("input_modalities", []):
+        source = f"config:model_overrides.{model_name}.supports_audio_input"
+        provenance["input_modalities"] = _exact_retained_source(prepared, source)
 
     if override.supports_web_search is not None and "supports_search_tool" in entry:
-        provenance["supports_search_tool"] = (
-            f"config:model_overrides.{model_name}.supports_web_search"
-        )
+        source = f"config:model_overrides.{model_name}.supports_web_search"
+        if override.supports_web_search is True and entry.get("supports_search_tool") is True:
+            provenance["supports_search_tool"] = _exact_retained_source(prepared, source)
+        elif provenance.get("supports_search_tool") == (
+            "codex:exact-template downgraded by LiteLLM supports_web_search=false"
+        ):
+            provenance["supports_search_tool"] = source
 
     if override.supported_openai_params is not None:
         source = f"config:model_overrides.{model_name}.supported_openai_params"
-        for field in (
-            "support_verbosity",
-            "default_verbosity",
-            "supports_parallel_tool_calls",
+        params = set(override.supported_openai_params)
+
+        if "verbosity" in params:
+            if entry.get("support_verbosity") is True:
+                provenance["support_verbosity"] = _exact_retained_source(prepared, source)
+                if "default_verbosity" in entry:
+                    provenance["default_verbosity"] = _exact_retained_source(prepared, source)
+        else:
+            if provenance.get("support_verbosity") == (
+                "LiteLLM supported_openai_params (verbosity absent)"
+            ):
+                provenance["support_verbosity"] = source
+            if provenance.get("default_verbosity") == "derived: verbosity disabled":
+                provenance["default_verbosity"] = "derived after " + source
+
+        if "parallel_tool_calls" in params:
+            if entry.get("supports_parallel_tool_calls") is True:
+                provenance["supports_parallel_tool_calls"] = _exact_retained_source(
+                    prepared,
+                    source,
+                )
+        elif provenance.get("supports_parallel_tool_calls") == (
+            "LiteLLM supported_openai_params (parallel_tool_calls absent)"
         ):
-            if field in entry and field in provenance:
-                provenance[field] = source
+            provenance["supports_parallel_tool_calls"] = source
+
         notes[:] = [
             note
             for note in notes
@@ -365,9 +408,9 @@ def _repair_exact_override_provenance(
                 "LiteLLM confirms parallel_tool_calls transport parameter",
             }
         ]
-        if "verbosity" in override.supported_openai_params:
+        if "verbosity" in params:
             notes.append("Configured override confirms verbosity transport parameter")
-        if "parallel_tool_calls" in override.supported_openai_params:
+        if "parallel_tool_calls" in params:
             notes.append("Configured override confirms parallel_tool_calls transport parameter")
 
 
