@@ -53,9 +53,10 @@ def test_exact_override_can_replace_aggregate_vision_denial_with_audited_provena
     assert audit["configured_value"] is True
     assert audit["original"] == {"state": "denied", "value": False}
     assert audit["effective"] == {"state": "guaranteed", "value": True}
-    assert model.provenance["input_modalities"] == (
-        "config:model_overrides.gpt-5.6-sol.supports_vision"
-    )
+    assert model.provenance["input_modalities"].startswith("codex:exact-template:gpt-5.6-sol")
+    assert "config:model_overrides.gpt-5.6-sol.supports_vision" in model.provenance[
+        "input_modalities"
+    ]
     assert "LiteLLM confirms vision support" not in model.notes
     assert "Configured override confirms vision support" in model.notes
 
@@ -90,6 +91,32 @@ def test_exact_reasoning_effort_override_replaces_old_denials_and_restricts_temp
     ]
 
 
+def test_effort_override_cannot_bypass_effective_reasoning_denial():
+    source = row(
+        "gpt-5.6-sol",
+        "openai/gpt-5.6-sol",
+        supports_reasoning=False,
+        supported_openai_params=["reasoning_effort"],
+    )
+    overrides = {
+        "gpt-5.6-sol": ModelOverride(reasoning_effort_levels=("low",)),
+    }
+
+    prepared = prepare_model_groups([[source]], INDEX, overrides)
+    assert prepared[0].evidence.reasoning_efforts.state == "denied"
+    assert prepared[0].evidence.reasoning_efforts.values == ()
+
+    _generated, explanations = generate_prepared_catalog(prepared, CATALOG)
+    model = explanations["gpt-5.6-sol"]
+
+    assert model.entry["supported_reasoning_levels"] == []
+    assert model.entry["default_reasoning_level"] is None
+    assert model.entry["supports_reasoning_summary_parameter"] is False
+    assert model.group_evidence["configured_overrides"]["reasoning_effort_levels"][
+        "effective"
+    ] == {"state": "denied", "value": []}
+
+
 def test_function_override_false_applies_dependency_closure_to_parallel_calls():
     source = row(
         "gpt-5.6-sol",
@@ -112,6 +139,31 @@ def test_function_override_false_applies_dependency_closure_to_parallel_calls():
     assert "config:model_overrides.gpt-5.6-sol.supports_function_calling" in model.provenance[
         "supports_parallel_tool_calls"
     ]
+
+
+def test_exact_supported_parameter_override_keeps_codex_owned_positive_provenance():
+    source = row(
+        "gpt-5.6-sol",
+        "openai/gpt-5.6-sol",
+        supported_openai_params=[],
+    )
+    overrides = {
+        "gpt-5.6-sol": ModelOverride(
+            supported_openai_params=("parallel_tool_calls", "verbosity"),
+        ),
+    }
+
+    prepared = prepare_model_groups([[source]], INDEX, overrides)
+    _generated, explanations = generate_prepared_catalog(prepared, CATALOG)
+    model = explanations["gpt-5.6-sol"]
+
+    assert model.entry["support_verbosity"] is True
+    assert model.entry["supports_parallel_tool_calls"] is True
+    for field in ("support_verbosity", "supports_parallel_tool_calls"):
+        assert model.provenance[field].startswith("codex:exact-template:gpt-5.6-sol")
+        assert "config:model_overrides.gpt-5.6-sol.supported_openai_params" in model.provenance[
+            field
+        ]
 
 
 def test_reasoning_override_false_clears_exact_reasoning_transport():
