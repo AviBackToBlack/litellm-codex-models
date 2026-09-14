@@ -81,7 +81,8 @@ def test_multi_deployment_exact_group_uses_aggregate_denials_without_donor_row()
     assert any("supports_vision" in item for item in model.group_evidence["disagreements"])
 
 
-def test_exact_group_reasoning_denial_clears_template_reasoning_levels():
+def test_exact_group_reasoning_denial_clears_all_reasoning_transport_features():
+    assert INDEX["gpt-5.6-sol"]["supports_reasoning_summary_parameter"] is True
     groups = [[
         row(
             "shared-gpt",
@@ -105,8 +106,39 @@ def test_exact_group_reasoning_denial_clears_template_reasoning_levels():
     assert model.kind == "exact"
     assert model.entry["supported_reasoning_levels"] == []
     assert model.entry["default_reasoning_level"] is None
+    assert model.entry["supports_reasoning_summary_parameter"] is False
     assert model.group_evidence["capabilities"]["supports_reasoning"]["state"] == "denied"
     assert "supports_reasoning=false" in model.provenance["supported_reasoning_levels"]
+    assert "reasoning denial" in model.provenance["supports_reasoning_summary_parameter"]
+
+
+def test_exact_group_function_denial_disables_parallel_tool_calls_even_when_parallel_unknown():
+    assert INDEX["gpt-5.6-sol"]["supports_parallel_tool_calls"] is True
+    groups = [[
+        row(
+            "shared-gpt",
+            "azure/gpt-5.6-sol",
+            supports_function_calling=True,
+            supports_parallel_function_calling=True,
+            supported_openai_params=["parallel_tool_calls"],
+        ),
+        row(
+            "shared-gpt",
+            "openai/gpt-5.6-sol",
+            supports_function_calling=False,
+            supported_openai_params=["parallel_tool_calls"],
+        ),
+    ]]
+
+    prepared = prepare_model_groups(groups, INDEX)
+    _generated, explanations = generate_prepared_catalog(prepared, CATALOG)
+    model = explanations["shared-gpt"]
+
+    assert model.kind == "exact"
+    assert model.entry["supports_parallel_tool_calls"] is False
+    assert model.group_evidence["capabilities"]["supports_function_calling"]["state"] == "denied"
+    assert model.group_evidence["capabilities"]["supports_parallel_function_calling"]["state"] == "unknown"
+    assert "function-calling capability denial" in model.provenance["supports_parallel_tool_calls"]
 
 
 def test_multi_deployment_foreign_group_uses_safe_intersections_and_min_context():
