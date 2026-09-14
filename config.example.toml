@@ -1,9 +1,27 @@
-# Ordered exact allowlist. Only these LiteLLM model_name values are emitted.
+# Ordered exact selectors. These strings are never interpreted as globs.
 models = [
   "gpt-5.6-sol",
   "claude_code.gpt-5.6-sol",
   "claude-sonnet-5",
 ]
+
+# Optional deterministic case-sensitive shell-style selectors. Exact selectors
+# are considered first; matches inside each glob are emitted in lexical order.
+model_globs = [
+  # "gpt-oss-*",
+]
+
+# Optional trusted compatibility assertions for one exact user-facing model_name.
+# The target must be selected by `models` or `model_globs`. Overrides replace
+# aggregate compatibility evidence but cannot force Codex template identity or
+# enable foreign-model Codex web search.
+#
+# [model_overrides."claude-sonnet-5"]
+# supports_vision = true
+# supports_function_calling = true
+# max_input_tokens = 200000
+# supported_openai_params = ["reasoning_effort", "tools"]
+# reasoning_effort_levels = ["low", "medium", "high"]
 
 [filter]
 strict = true
