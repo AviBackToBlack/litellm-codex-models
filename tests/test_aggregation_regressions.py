@@ -11,6 +11,10 @@ from litellm_codex_models.mapping import generate_model
 FIXTURE = Path(__file__).parent / "fixtures" / "codex-models.json"
 CATALOG = json.loads(FIXTURE.read_text())
 CATALOG_INDEX = {model["slug"]: model for model in CATALOG["models"]}
+AMBIGUOUS_INDEX = {
+    "gpt-5.6-sol": {},
+    "gpt-5.6-luna": {},
+}
 
 
 def row(
@@ -39,7 +43,7 @@ def test_ambiguous_catalog_matches_force_foreign_fallback():
         base_model="gpt-5.6-sol",
     )
 
-    group = aggregate_model_group([source], CATALOG_INDEX)
+    group = aggregate_model_group([source], AMBIGUOUS_INDEX)
 
     assert group.kind == "foreign"
     assert group.template_slug is None
