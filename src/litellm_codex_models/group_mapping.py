@@ -41,7 +41,6 @@ def prepare_model_groups(
     model_overrides: Mapping[str, ModelOverride] | None = None,
 ) -> list[PreparedModelGroup]:
     overrides = model_overrides or {}
-    used_overrides: set[str] = set()
     prepared: list[PreparedModelGroup] = []
 
     for selected in groups:
@@ -57,7 +56,6 @@ def prepare_model_groups(
         evidence = aggregate
         override_audit: tuple[OverrideAudit, ...] = ()
         if override is not None:
-            used_overrides.add(aggregate.model_name)
             evidence, override_audit = apply_model_override(aggregate, override)
 
         prepared.append(
@@ -68,13 +66,6 @@ def prepare_model_groups(
                 model_override=override,
                 override_audit=override_audit,
             )
-        )
-
-    unused = sorted(set(overrides) - used_overrides)
-    if unused:
-        raise AppError(
-            "Configured model_overrides target model(s) not selected by models/model_globs: "
-            + ", ".join(unused)
         )
     return prepared
 
@@ -245,20 +236,39 @@ def _apply_exact_group_capability_denials(
     group = prepared.evidence
     reasoning = group.capabilities["supports_reasoning"]
     if reasoning.state == "denied":
-        source = _source_or_default(
-            prepared,
-            ("supports_reasoning",),
-            "codex:exact-template downgraded by LiteLLM model-group supports_reasoning=false",
-        )
+        reasoning_sources = _override_sources(prepared, "supports_reasoning")
+        if reasoning_sources:
+            level_source = default_source = summary_source = (
+                "config override/dependency closure: " + ", ".join(reasoning_sources)
+            )
+        else:
+            level_source = (
+                "codex:exact-template downgraded by LiteLLM model-group supports_reasoning=false"
+            )
+            default_source = "derived: disabled by LiteLLM model-group reasoning denial"
+            summary_source = (
+                "codex:exact-template downgraded by LiteLLM model-group reasoning denial"
+            )
         if isinstance(entry.get("supported_reasoning_levels"), list):
             entry["supported_reasoning_levels"] = []
-            provenance["supported_reasoning_levels"] = source
+            provenance["supported_reasoning_levels"] = level_source
         if "default_reasoning_level" in entry:
             entry["default_reasoning_level"] = None
-            provenance["default_reasoning_level"] = source
+            provenance["default_reasoning_level"] = default_source
         if entry.get("supports_reasoning_summary_parameter") is True:
             entry["supports_reasoning_summary_parameter"] = False
-            provenance["supports_reasoning_summary_parameter"] = source
+            provenance["supports_reasoning_summary_parameter"] = summary_source
+
+    audio = group.capabilities["supports_audio_input"]
+    if audio.state == "denied" and "audio" in entry.get("input_modalities", []):
+        entry["input_modalities"] = [
+            modality for modality in entry["input_modalities"] if modality != "audio"
+        ]
+        provenance["input_modalities"] = _source_or_default(
+            prepared,
+            ("supports_audio_input",),
+            "codex:exact-template downgraded by LiteLLM model-group supports_audio_input=false",
+        )
 
     parallel = group.capabilities["supports_parallel_function_calling"]
     functions = group.capabilities["supports_function_calling"]
@@ -326,6 +336,11 @@ def _repair_exact_override_provenance(
         notes[:] = [note for note in notes if note != "LiteLLM confirms vision support"]
         if override.supports_vision:
             notes.append("Configured override confirms vision support")
+
+    if override.supports_audio_input is not None and "input_modalities" in entry:
+        provenance["input_modalities"] = (
+            f"config:model_overrides.{model_name}.supports_audio_input"
+        )
 
     if override.supports_web_search is not None and "supports_search_tool" in entry:
         provenance["supports_search_tool"] = (
@@ -450,9 +465,9 @@ def generate_prepared_model(
             provenance["display_name"] = "derived: LiteLLM model-group alias"
             notes.append(f"Group resolves to exact Codex template {group.template_slug}")
         _overlay_exact(entry, synthetic, provenance, notes)
+        _repair_exact_override_provenance(entry, prepared, provenance, notes)
         _apply_exact_group_capability_denials(entry, prepared, provenance)
         _apply_exact_reasoning_override(entry, prepared, provenance)
-        _repair_exact_override_provenance(entry, prepared, provenance, notes)
         notes.extend(f"Group disagreement: {item}" for item in group.disagreements)
         return GroupGeneratedModel(
             entry=entry,
