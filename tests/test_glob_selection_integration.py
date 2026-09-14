@@ -54,7 +54,7 @@ def test_selection_provenance_survives_preparation_and_generation():
 
 def test_explain_accepts_glob_selected_model_and_prints_selection_source(tmp_path, capsys):
     config = tmp_path / "config.toml"
-    config.write_text('models = []\nmodel_globs = ["gpt-*"]\n', encoding="utf-8")
+    config.write_text('model_globs = ["gpt-*"]\n', encoding="utf-8")
 
     payload = tmp_path / "litellm.json"
     payload.write_text(
@@ -75,3 +75,45 @@ def test_explain_accepts_glob_selected_model_and_prints_selection_source(tmp_pat
 
     assert result == 0
     assert "selection_source: glob:gpt-*" in capsys.readouterr().out
+
+
+def test_explain_rejects_unconfigured_model_before_litellm_io(tmp_path, capsys):
+    config = tmp_path / "config.toml"
+    config.write_text('model_globs = ["gpt-*"]\n', encoding="utf-8")
+
+    result = main([
+        "--config",
+        str(config),
+        "explain",
+        "claude-sonnet-5",
+    ])
+
+    assert result == 2
+    error = capsys.readouterr().err
+    assert "not present in the configured model selectors" in error
+    assert "litellm.url" not in error
+
+
+def test_list_configured_uses_glob_expansion_order(tmp_path, capsys):
+    config = tmp_path / "config.toml"
+    config.write_text('model_globs = ["gpt-*"]\n', encoding="utf-8")
+
+    payload = tmp_path / "litellm.json"
+    payload.write_text(
+        json.dumps({"data": [row("gpt-z"), row("other"), row("gpt-a")]}),
+        encoding="utf-8",
+    )
+
+    result = main([
+        "--config",
+        str(config),
+        "list",
+        "--input",
+        str(payload),
+        "--configured",
+    ])
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert output.index("gpt-a") < output.index("gpt-z")
+    assert "other" not in output
