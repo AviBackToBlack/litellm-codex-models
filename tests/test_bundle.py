@@ -153,6 +153,23 @@ def test_drive_qualified_resource_path_is_rejected_portably(tmp_path):
         load_codex_bundle(manifest)
 
 
+def test_drive_relative_resource_path_is_rejected_portably(tmp_path):
+    content = b'{"models": []}\n'
+    (tmp_path / "C:models.json").write_bytes(content)
+    manifest = _write_manifest(
+        tmp_path,
+        {
+            "catalog": {
+                "path": "C:models.json",
+                "sha256": _digest(content),
+            }
+        },
+    )
+
+    with pytest.raises(AppError, match="must stay inside the bundle directory"):
+        load_codex_bundle(manifest)
+
+
 def test_resource_roles_must_use_distinct_paths(tmp_path):
     content = b"same bytes\n"
     spec = _resource(tmp_path, "shared.txt", content)
@@ -202,3 +219,11 @@ def test_non_utf8_resource_can_be_digest_verified_but_not_read_as_text(tmp_path)
 
     with pytest.raises(AppError, match="not valid UTF-8"):
         bundle.resource("catalog").text()
+
+
+def test_unreadable_manifest_filesystem_error_is_wrapped(tmp_path):
+    manifest_dir = tmp_path / "codex-bundle.json"
+    manifest_dir.mkdir()
+
+    with pytest.raises(AppError, match="Failed to read Codex bundle manifest"):
+        load_codex_bundle(manifest_dir)
